@@ -1,0 +1,2390 @@
+<!DOCTYPE html>
+<html lang="ko">
+<head>
+<meta charset="UTF-8"/>
+<meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no"/>
+<title>세인비에스 WMS</title>
+<style>
+  html,body{margin:0;padding:0;background:#050D1F;overflow-x:hidden;}
+  *{box-sizing:border-box;}
+</style>
+<script src="https://unpkg.com/react@18/umd/react.production.min.js" crossorigin></script>
+<script src="https://unpkg.com/react-dom@18/umd/react-dom.production.min.js" crossorigin></script>
+<script src="https://unpkg.com/@babel/standalone/babel.min.js" crossorigin></script>
+</head>
+<body>
+<div id="root"></div>
+<script type="text/babel" data-presets="react">
+
+const { useState, useRef, useEffect, useMemo } = React;
+
+/* ===================== Google Sheets API 연동 ===================== */
+const API_URL = "https://script.google.com/macros/s/AKfycby3Tyqh0xOUV2fZseKagBPoGCEDFXO05ONy8bwDGux1UpwTb7uWnyVT6ktDJJLQphDi/exec";
+
+function apiGet(action, params){
+  var qs = "action="+action;
+  if(params){
+    Object.keys(params).forEach(function(k){
+      qs += "&"+k+"="+encodeURIComponent(params[k]);
+    });
+  }
+  return fetch(API_URL+"?"+qs).then(function(r){return r.json();});
+}
+
+function apiPost(action, data){
+  return fetch(API_URL, {
+    method:"POST",
+    headers:{"Content-Type":"text/plain;charset=utf-8"},
+    body:JSON.stringify(Object.assign({action:action}, data))
+  }).then(function(r){return r.json();});
+}
+
+/* 시트(한글 컬럼) -> 앱 내부 객체(영문 필드) 변환 */
+function rowToItem(r){
+  return{
+    id:r["품목ID"], name:r["품목명"], group:r["구분"],
+    stock:Number(r["재고량"])||0, unit:r["단위"], loc:r["위치"]
+  };
+}
+function itemToRow(it){
+  return{
+    "품목ID":it.id, "품목명":it.name, "구분":it.group,
+    "재고량":it.stock, "단위":it.unit, "위치":it.loc
+  };
+}
+function rowToLog(r){
+  return{
+    id:r["ID"], date:r["날짜"], time:r["시간"],
+    itemId:r["품목ID"], itemName:r["품목명"], group:r["구분"],
+    type:r["입출고"], qty:Number(r["수량"])||0, unit:r["단위"],
+    partner:r["거래처"]||"", memo:r["메모"]||"", by:r["담당자"]
+  };
+}
+function logToRow(l){
+  return{
+    "ID":l.id, "날짜":l.date, "시간":l.time,
+    "품목ID":l.itemId, "품목명":l.itemName, "구분":l.group,
+    "입출고":l.type, "수량":l.qty, "단위":l.unit,
+    "거래처":l.partner||"", "메모":l.memo||"", "담당자":l.by
+  };
+}
+function rowToFormula(f){
+  return{
+    id:f.id, productName:f.productName, productId:f.productId,
+    outputUnit:f.outputUnit, desc:f.desc,
+    ingredients:(f.ingredients||[]).map(function(ing){
+      return{itemId:ing.itemId, name:ing.name, kgPer250:Number(ing.kgPer250)||0};
+    })
+  };
+}
+function formulaToRows(f){
+  return f.ingredients.map(function(ing){
+    return{
+      "지시서ID":f.id, "제품명":f.productName, "완제품ID":f.productId,
+      "출력단위":f.outputUnit, "설명":f.desc||"",
+      "원료ID":ing.itemId, "원료명":ing.name, "배합량(kg/250kg)":ing.kgPer250
+    };
+  });
+}
+function rowToProdLog(r){
+  return{
+    id:r["ID"], date:r["날짜"], time:r["시간"],
+    formulaId:r["지시서ID"], formulaName:r["지시서명"],
+    productId:r["완제품ID"], outputKg:Number(r["생산량"])||0,
+    batches:Number(r["배치수"])||0,
+    ingredients:(function(){try{return JSON.parse(r["사용원료(JSON)"]||"[]");}catch(e){return [];}})(),
+    memo:r["메모"]||"", by:r["담당자"]
+  };
+}
+function prodLogToRow(p){
+  return{
+    "ID":p.id, "날짜":p.date, "시간":p.time,
+    "지시서ID":p.formulaId, "지시서명":p.formulaName,
+    "완제품ID":p.productId, "생산량":p.outputKg, "배치수":p.batches,
+    "사용원료(JSON)":JSON.stringify(p.ingredients||[]),
+    "메모":p.memo||"", "담당자":p.by
+  };
+}
+function visitToRow(v){
+  return{
+    "ID":v.id, "사용자명":v.userName, "역할":v.role,
+    "날짜":v.date, "시간":v.time
+  };
+}
+
+const BG="#050D1F", SURF="#0A1628", CARD="#0F1E35", CARDH="#132240";
+const BRD="#1A3A5C", BRD2="#0F2645";
+const ACC="#1D6FE8", ACCL="#2E84FF";
+const SKY="#38BDF8", GRN="#10B981", RED="#F43F5E", YLW="#F59E0B", PRP="#818CF8";
+const TXT="#CBD5E1", TXTH="#F0F6FF", MUT="#4A6080", WHT="#FFFFFF";
+
+const GROUPS = ["원료","바이오보관품","비에스"];
+const GCOL = {"원료":SKY,"바이오보관품":YLW,"비에스":GRN};
+const GICO = {"원료":"[원료]","바이오보관품":"[보관]","비에스":"[제품]"};
+const GDSC = {"원료":"생산 투입 원자재","바이오보관품":"바이오라인 보관품","비에스":"비에스 자체 제품"};
+const GGRAD= {"원료":"linear-gradient(135deg,#38BDF8,#0EA5E9)","바이오보관품":"linear-gradient(135deg,#F59E0B,#D97706)","비에스":"linear-gradient(135deg,#10B981,#059669)"};
+
+const USERS=[
+  {id:"admin1",name:"관리자1",role:"admin"},
+  {id:"admin2",name:"관리자2",role:"admin"},
+  {id:"admin3",name:"관리자3",role:"admin"},
+  {id:"viewer",name:"일반조회",role:"viewer"},
+];
+
+
+
+
+
+
+function today(){return new Date().toISOString().slice(0,10);}
+function nowTime(){return new Date().toTimeString().slice(0,5);}
+function comma(n){return Number(n).toLocaleString();}
+
+async function callAI(q,items,logs){
+  const iList=items.map(function(i){return i.name+"("+i.id+"):"+comma(i.stock)+i.unit+"["+i.group+"]";}).join("\n");
+  const lList=logs.slice(0,20).map(function(l){return l.date+"["+l.type+"]"+l.itemName+" "+comma(l.qty)+l.unit+"-"+l.partner;}).join("\n");
+  const ctx="당신은 세인비에스 창고관리 AI입니다. 실시간 데이터로 한국어 간결하게 답변. 이모지 활용.\n[재고현황]\n"+iList+"\n[최근입출고]\n"+lList;
+  const r=await fetch("https://api.anthropic.com/v1/messages",{
+    method:"POST",headers:{"Content-Type":"application/json"},
+    body:JSON.stringify({model:"claude-sonnet-4-20250514",max_tokens:1000,system:ctx,messages:[{role:"user",content:q}]})
+  });
+  const d=await r.json();
+  return d.content&&d.content[0]?d.content[0].text:"오류가 발생했습니다.";
+}
+
+function SeinLogo({size}){
+  const h=size||36;
+  const w=Math.round(h*1.67);
+  return(
+    <svg width={w} height={h} viewBox="0 0 100 60" fill="none">
+      <defs>
+        <linearGradient id="sg1" x1="0" y1="0" x2="1" y2="1">
+          <stop offset="0%" stopColor="#3D2B8F"/>
+          <stop offset="100%" stopColor="#1A0F5E"/>
+        </linearGradient>
+        <linearGradient id="sg2" x1="0" y1="0" x2="0" y2="1">
+          <stop offset="0%" stopColor="#4DC8F5"/>
+          <stop offset="100%" stopColor="#1A8FD1"/>
+        </linearGradient>
+      </defs>
+      <path d="M25,30 L22,7 A23,23 0 0,1 25,7 Z" fill="url(#sg1)"/>
+      <path d="M25,30 L10,12 A23,23 0 0,1 22,7 Z" fill="url(#sg1)"/>
+      <path d="M25,30 L4,20 A23,23 0 0,1 10,12 Z" fill="url(#sg1)"/>
+      <path d="M25,30 L2,30 A23,23 0 0,1 4,20 Z" fill="url(#sg1)"/>
+      <path d="M25,30 L4,40 A23,23 0 0,1 2,30 Z" fill="url(#sg1)"/>
+      <path d="M25,30 L10,48 A23,23 0 0,1 4,40 Z" fill="url(#sg1)"/>
+      <path d="M25,30 L25,53 A23,23 0 0,1 10,48 Z" fill="url(#sg1)"/>
+      <text x="38" y="43" fontSize="28" fontWeight="900" fill="url(#sg2)" fontFamily="Arial,sans-serif">SEIN</text>
+    </svg>
+  );
+}
+
+function Card({children,style,onClick,onMouseOver,onMouseOut}){
+  return (
+    <div onClick={onClick} onMouseOver={onMouseOver} onMouseOut={onMouseOut}
+      style={Object.assign({background:CARD,border:"1px solid "+BRD,borderRadius:14},style||{})}>
+      {children}
+    </div>
+  );
+}
+
+function SectionTitle({icon,title,sub,right}){
+  return(
+    <div style={{marginBottom:20,display:"flex",alignItems:"center",
+      justifyContent:"space-between",borderBottom:"1px solid "+BRD2,paddingBottom:14,flexWrap:"nowrap",gap:10}}>
+      <div style={{display:"flex",alignItems:"center",gap:12}}>
+        <div style={{minWidth:40,height:40,padding:"0 8px",borderRadius:10,background:"rgba(29,111,232,0.15)",
+          border:"1px solid "+BRD,display:"flex",alignItems:"center",justifyContent:"center",
+          fontSize:13,fontWeight:700,whiteSpace:"nowrap",flexShrink:0}}>{icon}</div>
+        <div>
+          <div style={{fontSize:22,fontWeight:900,color:WHT,whiteSpace:"nowrap"}}>{title}</div>
+          {sub&&<div style={{fontSize:13,color:MUT,marginTop:2}}>{sub}</div>}
+        </div>
+      </div>
+      {right||null}
+    </div>
+  );
+}
+
+function GroupTabs({active,onChange}){
+  const tabs=[
+    {key:"전체",color:ACC},
+    {key:"원료",color:SKY},
+    {key:"바이오보관품",color:YLW},
+    {key:"비에스",color:GRN},
+  ];
+  return(
+    <div style={{display:"flex",gap:8,marginBottom:18,flexWrap:"wrap"}}>
+      {tabs.map(function(t){
+        const on=active===t.key;
+        return(
+          <button key={t.key} onClick={function(){onChange(t.key);}} style={{
+            padding:"11px 18px",borderRadius:12,cursor:"pointer",
+            border:"2px solid "+(on?t.color:BRD),
+            background:on?t.color+"20":"transparent",
+            color:on?t.color:MUT,
+            fontWeight:on?800:500,fontSize:15,
+            whiteSpace:"nowrap",
+            transition:"all 0.15s",
+          }}>
+            {t.key}
+          </button>
+        );
+      })}
+    </div>
+  );
+}
+
+function LoginScreen({onLogin,userList}){
+  const [sel,setSel]=useState(null);
+  const [pw,setPw]=useState("");
+  const [err,setErr]=useState("");
+  const [busy,setBusy]=useState(false);
+  function tryLogin(){
+    if(!sel){setErr("사용자를 선택하세요");return;}
+    if(!pw){setErr("비밀번호를 입력하세요");return;}
+    setBusy(true);setErr("");
+    apiGet("login",{userId:sel,pw:pw}).then(function(res){
+      setBusy(false);
+      if(res.ok){onLogin(res.user);}
+      else{setErr(res.message||"비밀번호가 올바르지 않습니다");setPw("");}
+    }).catch(function(){
+      setBusy(false);setErr("서버 연결에 실패했습니다");
+    });
+  }
+  return(
+    <div style={{minHeight:"100vh",background:BG,display:"flex",alignItems:"center",
+      justifyContent:"center",flexDirection:"column",padding:"20px"}}>
+      <div style={{textAlign:"center",marginBottom:28}}>
+        <div style={{display:"flex",alignItems:"center",justifyContent:"center",gap:14,marginBottom:10}}>
+          <SeinLogo size={60}/>
+          <div style={{textAlign:"left"}}>
+            <div style={{fontSize:28,fontWeight:900,color:WHT}}>세인비에스</div>
+            <div style={{fontSize:11,color:"#1AABF0",fontWeight:700,letterSpacing:"0.1em"}}>SEIN B&S CO., LTD</div>
+          </div>
+        </div>
+        <div style={{fontSize:13,color:MUT,background:CARD,border:"1px solid "+BRD,
+          borderRadius:10,padding:"5px 16px",display:"inline-block"}}>
+          창고관리 시스템 WMS v8.0
+        </div>
+      </div>
+      <div style={{background:CARD,border:"1px solid "+BRD,borderRadius:20,
+        padding:"32px 28px",width:"100%",maxWidth:360}}>
+        <div style={{fontSize:18,fontWeight:800,color:WHT,marginBottom:20,textAlign:"center"}}>로그인</div>
+        <div style={{marginBottom:18}}>
+          <div style={{fontSize:13,color:MUT,marginBottom:10,fontWeight:700}}>사용자 선택</div>
+          <div style={{display:"grid",gridTemplateColumns:"1fr 1fr",gap:10}}>
+            {(userList&&userList.length?userList:USERS).map(function(u){
+              const on=sel===u.id;
+              return(
+                <button key={u.id} onClick={function(){setSel(u.id);setErr("");setPw("");}}
+                  style={{padding:"13px 8px",borderRadius:12,cursor:"pointer",
+                    background:on?(u.role==="viewer"?"rgba(245,158,11,0.15)":"rgba(29,111,232,0.15)")
+                      :(u.role==="viewer"?"rgba(245,158,11,0.06)":"transparent"),
+                    border:"2px solid "+(on?(u.role==="viewer"?YLW:ACC):(u.role==="viewer"?"rgba(245,158,11,0.4)":BRD)),
+                    color:on?(u.role==="viewer"?YLW:ACCL):(u.role==="viewer"?YLW:MUT),
+                    fontSize:14,fontWeight:700,transition:"all 0.15s"}}>
+                  <div>{u.name}</div>
+                  <div style={{fontSize:11,marginTop:4,opacity:0.85,
+                    fontWeight:u.role==="viewer"?800:400}}>
+                    {u.role==="admin"?"관리자":"조회전용"}
+                  </div>
+                </button>
+              );
+            })}
+          </div>
+        </div>
+        <div style={{marginBottom:16}}>
+          <div style={{fontSize:13,color:MUT,marginBottom:8,fontWeight:700}}>비밀번호</div>
+          <input type="password" value={pw}
+            onChange={function(e){setPw(e.target.value);setErr("");}}
+            onKeyDown={function(e){if(e.key==="Enter")tryLogin();}}
+            placeholder="비밀번호 입력"
+            style={{width:"100%",background:SURF,border:"1px solid "+(err?RED:BRD),
+              borderRadius:10,color:TXTH,padding:"13px 16px",fontSize:16,outline:"none"}}/>
+        </div>
+        {err&&<div style={{color:RED,fontSize:13,marginBottom:12,textAlign:"center",fontWeight:600}}>{"[주의] "+err}</div>}
+        <button onClick={tryLogin} disabled={busy} style={{width:"100%",padding:"14px",borderRadius:12,
+          border:"none",cursor:busy?"not-allowed":"pointer",
+          background:"linear-gradient(135deg,#1D6FE8,#38BDF8)",opacity:busy?0.7:1,
+          color:"#fff",fontWeight:800,fontSize:16}}>
+          {busy?"확인 중...":"로그인"}
+        </button>
+      </div>
+    </div>
+  );
+}
+
+function App(){
+  const [user,setUser]=useState(null);
+  const [tab,setTab]=useState("dashboard");
+  const [items,setItems]=useState([]);
+  const [logs,setLogs]=useState([]);
+  const [fmls,setFmls]=useState([]);
+  const [pLogs,setPLogs]=useState([]);
+  const [toast,setToast]=useState(null);
+  const [clock,setClock]=useState(new Date());
+  const [visits,setVisits]=useState([]);
+  const [users,setUsers]=useState([]);
+  const [loading,setLoading]=useState(true);
+  const [loadErr,setLoadErr]=useState(null);
+
+  useEffect(function(){
+    var t=setInterval(function(){setClock(new Date());},1000);
+    return function(){clearInterval(t);};
+  },[]);
+
+  function loadAll(){
+    setLoading(true);setLoadErr(null);
+    apiGet("getAll").then(function(d){
+      if(d.error){setLoadErr(d.error);setLoading(false);return;}
+      setItems((d.items||[]).map(rowToItem));
+      setLogs((d.logs||[]).map(rowToLog).sort(function(a,b){return b.date.localeCompare(a.date)||b.time.localeCompare(a.time);}));
+      setFmls((d.formulas||[]).map(rowToFormula));
+      setPLogs((d.prodlogs||[]).map(rowToProdLog).sort(function(a,b){return b.date.localeCompare(a.date)||b.time.localeCompare(a.time);}));
+      setVisits((d.visits||[]).map(function(r){return{id:r["ID"],userName:r["사용자명"],role:r["역할"],date:r["날짜"],time:r["시간"]};}).reverse());
+      setUsers((d.users||[]).map(function(r){return{id:r["ID"],name:r["이름"],role:r["역할"]};}));
+      setLoading(false);
+    }).catch(function(err){
+      setLoadErr(String(err));setLoading(false);
+    });
+  }
+
+  useEffect(function(){ loadAll(); },[]);
+
+  function showToast(msg,color){setToast({msg:msg,color:color||GRN});setTimeout(function(){setToast(null);},3000);}
+
+  function handleLogin(u){
+    var now=new Date();
+    var visit={id:Date.now(),userName:u.name,role:u.role,
+      date:now.toISOString().slice(0,10),time:now.toTimeString().slice(0,5)};
+    setVisits(function(p){return [visit].concat(p);});
+    apiPost("addVisit",{data:visitToRow(visit)}).catch(function(){});
+    setUser(u);setTab("dashboard");
+  }
+
+  if(loading){
+    return(
+      <div style={{minHeight:"100vh",background:BG,display:"flex",alignItems:"center",
+        justifyContent:"center",flexDirection:"column",gap:14}}>
+        <SeinLogo size={48}/>
+        <div style={{color:"#CBD5E1",fontSize:14}}>데이터 불러오는 중...</div>
+      </div>
+    );
+  }
+
+  if(loadErr){
+    return(
+      <div style={{minHeight:"100vh",background:BG,display:"flex",alignItems:"center",
+        justifyContent:"center",flexDirection:"column",gap:14,padding:20,textAlign:"center"}}>
+        <div style={{color:RED,fontWeight:800,fontSize:16}}>데이터 불러오기 실패</div>
+        <div style={{color:"#4A6080",fontSize:13}}>{loadErr}</div>
+        <button onClick={loadAll} style={{background:ACC,border:"none",borderRadius:10,
+          color:"#fff",padding:"10px 20px",cursor:"pointer",fontWeight:700}}>다시 시도</button>
+      </div>
+    );
+  }
+
+  if(!user)return <LoginScreen onLogin={handleLogin} userList={users}/>;
+  const isAdmin=user.role==="admin";
+  const TABS=[
+    {key:"dashboard",icon:"[대시]",label:"대시보드"},
+    {key:"produce",icon:"[공장]",label:"생산",adm:true},
+    {key:"inout",icon:"[입출]",label:"입출고",adm:true},
+    {key:"inventory",icon:"[목록]",label:"재고현황"},
+    {key:"monthly",icon:"[차트]",label:"월별분석"},
+    {key:"forecast",icon:"[예측]",label:"수요예측"},
+    {key:"items",icon:"[설정]",label:"품목관리",adm:true},
+    {key:"ai",icon:"[AI]",label:"AI상담"},
+  ].filter(function(t){return !t.adm||isAdmin;});
+
+  const TC={
+    dashboard:{c:SKY,bg:"rgba(56,189,248,0.18)"},
+    produce:{c:PRP,bg:"rgba(129,140,248,0.18)"},
+    inout:{c:GRN,bg:"rgba(16,185,129,0.18)"},
+    inventory:{c:"#60A5FA",bg:"rgba(96,165,250,0.18)"},
+    monthly:{c:"#F472B6",bg:"rgba(244,114,182,0.18)"},
+    forecast:{c:YLW,bg:"rgba(245,158,11,0.18)"},
+    items:{c:"#94A3B8",bg:"rgba(148,163,184,0.18)"},
+    ai:{c:"#2DD4BF",bg:"rgba(45,212,191,0.18)"},
+  };
+
+  return(
+    <div style={{minHeight:"100vh",background:BG,color:TXT,
+      fontFamily:"'Pretendard','Noto Sans KR',system-ui,sans-serif",overflowX:"hidden"}}>
+      <header style={{background:SURF,borderBottom:"1px solid "+BRD,
+        padding:"10px 14px",display:"flex",alignItems:"center",
+        justifyContent:"space-between",position:"sticky",top:0,zIndex:200,gap:10}}>
+        <div style={{display:"flex",alignItems:"center",gap:10,flexShrink:0,minWidth:0}}>
+          <SeinLogo size={34}/>
+          <div style={{minWidth:0}}>
+            <div style={{fontWeight:900,fontSize:19,color:WHT,whiteSpace:"nowrap",letterSpacing:"-0.3px"}}>세인비에스</div>
+            <div style={{fontSize:10,color:"#1AABF0",fontWeight:700,marginTop:1}}>WMS</div>
+          </div>
+        </div>
+        <div style={{textAlign:"right",flexShrink:0}}>
+          <div style={{fontSize:16,fontWeight:900,color:WHT,whiteSpace:"nowrap"}}>{clock.toTimeString().slice(0,8)}</div>
+          <div style={{fontSize:14,color:"#38BDF8",fontWeight:700,marginTop:2,whiteSpace:"nowrap"}}>{clock.toLocaleDateString("ko-KR",{month:"long",day:"numeric",weekday:"short"})}</div>
+        </div>
+        <div style={{display:"flex",alignItems:"center",gap:8,flexShrink:0}}>
+          <div style={{padding:"5px 10px",background:isAdmin?"rgba(29,111,232,0.15)":"rgba(16,185,129,0.1)",
+            border:"1px solid "+(isAdmin?ACC:GRN),borderRadius:8,textAlign:"center"}}>
+            <div style={{fontSize:13,fontWeight:700,color:isAdmin?ACCL:GRN}}>{isAdmin?"[키]":"[눈]"} {user.name}</div>
+            <div style={{fontSize:9,color:MUT}}>{isAdmin?"관리자":"조회전용"}</div>
+          </div>
+          <button onClick={function(){setUser(null);}}
+            style={{background:"transparent",border:"1px solid "+BRD,borderRadius:8,
+              color:MUT,cursor:"pointer",fontSize:12,padding:"6px 10px"}}>로그아웃</button>
+        </div>
+      </header>
+
+      <div style={{background:SURF,borderBottom:"1px solid "+BRD,overflowX:"auto",display:"flex"}}>
+        {TABS.map(function(t){
+          const on=tab===t.key;
+          const tc=TC[t.key]||{c:ACC,bg:"rgba(29,111,232,0.18)"};
+          return(
+            <button key={t.key} onClick={function(){setTab(t.key);}}
+              style={{background:on?tc.bg:"transparent",
+                border:"none",borderBottom:"3px solid "+(on?tc.c:"transparent"),
+                color:on?tc.c:MUT,
+                padding:"10px 13px",cursor:"pointer",fontSize:13,fontWeight:on?800:500,
+                display:"flex",flexDirection:"column",alignItems:"center",gap:5,
+                whiteSpace:"nowrap",flexShrink:0,minWidth:62,transition:"all 0.15s"}}>
+              <div style={{minWidth:38,height:38,padding:"0 6px",borderRadius:10,
+                background:on?tc.c+"30":tc.bg,border:"1px solid "+(on?tc.c:"transparent"),
+                display:"flex",alignItems:"center",justifyContent:"center",fontSize:11,fontWeight:800,whiteSpace:"nowrap",
+                transition:"all 0.15s"}}>{t.icon}</div>
+              <span style={{fontSize:12}}>{t.label}</span>
+            </button>
+          );
+        })}
+      </div>
+
+      {!isAdmin&&(
+        <div style={{background:"rgba(245,158,11,0.08)",borderBottom:"1px solid rgba(245,158,11,0.2)",
+          padding:"8px 16px",textAlign:"center",fontSize:13,color:YLW,fontWeight:600}}>
+          [눈] 조회 전용 모드
+        </div>
+      )}
+
+      <main style={{maxWidth:1040,margin:"0 auto",padding:"18px 14px 60px"}}>
+        {tab==="dashboard"&&<Dashboard items={items} logs={logs} pLogs={pLogs} setTab={setTab} isAdmin={isAdmin} visits={visits}/>}
+        {tab==="produce"&&isAdmin&&<Produce items={items} setItems={setItems} logs={logs} setLogs={setLogs} fmls={fmls} setFmls={setFmls} pLogs={pLogs} setPLogs={setPLogs} showToast={showToast} user={user}/>}
+        {tab==="inout"&&isAdmin&&<InOut items={items} setItems={setItems} logs={logs} setLogs={setLogs} showToast={showToast} user={user}/>}
+        {tab==="inventory"&&<Inventory items={items} setItems={isAdmin?setItems:null} showToast={showToast} isAdmin={isAdmin} logs={logs}/>}
+        {tab==="monthly"&&<MonthlyChart logs={logs}/>}
+        {tab==="forecast"&&<Forecast items={items} logs={logs}/>}
+        {tab==="items"&&isAdmin&&<ItemManager items={items} setItems={setItems} showToast={showToast}/>}
+        {tab==="ai"&&<AIChat items={items} logs={logs}/>}
+      </main>
+
+      {toast&&(
+        <div style={{position:"fixed",bottom:28,left:"50%",transform:"translateX(-50%)",
+          background:toast.color,color:"#fff",borderRadius:12,padding:"12px 24px",
+          fontWeight:700,fontSize:15,zIndex:999,whiteSpace:"nowrap"}}>
+          {toast.msg}
+        </div>
+      )}
+    </div>
+  );
+}
+
+function Dashboard({items,logs,pLogs,setTab,isAdmin,visits}){
+  const [modal,setModal]=useState(null);
+  const zero=items.filter(function(i){return i.stock===0;});
+  const total=items.reduce(function(s,i){return s+i.stock;},0);
+  const tLogs=logs.filter(function(l){return l.date===today();});
+  const tIn=tLogs.filter(function(l){return l.type==="입고";}).reduce(function(s,l){return s+l.qty;},0);
+  const tOut=tLogs.filter(function(l){return l.type==="출고";}).reduce(function(s,l){return s+l.qty;},0);
+  const todayProd=pLogs.filter(function(p){return p.date===today();}).reduce(function(s,p){return s+p.outputKg;},0);
+
+  const gStats=GROUPS.map(function(g){return{
+    g,col:GCOL[g],icon:GICO[g],grad:GGRAD[g],
+    count:items.filter(function(i){return i.group===g;}).length,
+    stock:items.filter(function(i){return i.group===g;}).reduce(function(s,i){return s+i.stock;},0),
+    zero:items.filter(function(i){return i.group===g&&i.stock===0;}).length,
+  };});
+
+  const last7=Array.from({length:7},function(_,i){
+    const d=new Date(); d.setDate(d.getDate()-6+i);
+    const ds=d.toISOString().slice(0,10);
+    const dl=logs.filter(function(l){return l.date===ds;});
+    return{
+      label:(d.getMonth()+1)+"/"+(d.getDate()),
+      isToday:ds===today(),
+      in:dl.filter(function(l){return l.type==="입고";}).reduce(function(s,l){return s+l.qty;},0),
+      out:dl.filter(function(l){return l.type==="출고";}).reduce(function(s,l){return s+l.qty;},0),
+    };
+  });
+  const maxBar=Math.max.apply(null,last7.map(function(d){return Math.max(d.in,d.out);}));
+  const mb=maxBar||1;
+
+  const kpis=[
+    {icon:"[제품]",label:"전체 품목",val:items.length+"종",color:ACC,mk:"all"},
+    {icon:"[통계]",label:"총 재고량",val:comma(total)+"kg",color:SKY,mk:"total"},
+    {icon:"[위험]",label:"재고 없음",val:zero.length+"종",color:RED,mk:"zero"},
+  ];
+  if(isAdmin){
+    kpis.push({icon:"[공장]",label:"오늘 생산",val:todayProd>0?comma(todayProd)+"kg":"없음",color:PRP,mk:"produce",isNav:true});
+  }
+
+  return(
+    <div>
+      <SectionTitle icon="[대시]" title="대시보드" sub="세인비에스 창고 실시간 현황"/>
+      <div style={{display:"grid",gridTemplateColumns:"1fr 1fr",gap:10,marginBottom:12}}>
+        {kpis.map(function(k){
+          return(
+            <Card key={k.label}
+              onClick={function(){k.isNav?(k.mk&&setTab(k.mk)):setModal(k.mk);}}
+              style={{padding:"18px 16px",position:"relative",overflow:"hidden",
+                cursor:"pointer",border:"1px solid "+k.color+"40"}}
+              onMouseOver={function(e){e.currentTarget.style.transform="translateY(-3px)";}}
+              onMouseOut={function(e){e.currentTarget.style.transform="translateY(0)";}}
+            >
+              
+              <div style={{position:"absolute",top:10,right:12,fontSize:11,color:k.color,fontWeight:700,opacity:0.7}}>&gt;</div>
+              <div style={{fontSize:26,marginBottom:6}}>{k.icon}</div>
+              <div style={{fontSize:26,fontWeight:900,color:k.color}}>{k.val}</div>
+              <div style={{fontSize:14,color:MUT,marginTop:4}}>{k.label}</div>
+            </Card>
+          );
+        })}
+      </div>
+
+      <div style={{display:"grid",gridTemplateColumns:"1fr 1fr 1fr",gap:8,marginBottom:14}}>
+        {[
+          {label:"오늘 입고",val:comma(tIn)+"kg",color:GRN},
+          {label:"오늘 출고",val:comma(tOut)+"kg",color:RED},
+          {label:"처리건수",val:tLogs.length+"건",color:YLW},
+        ].map(function(k){
+          return(
+            <Card key={k.label}
+              onClick={function(){setModal("today");}}
+              style={{padding:"13px 10px",
+                cursor:"pointer",border:"1px solid "+k.color+"25"}}
+              onMouseOver={function(e){e.currentTarget.style.transform="translateY(-2px)";}}
+              onMouseOut={function(e){e.currentTarget.style.transform="translateY(0)";}}
+            >
+              <div style={{fontSize:11,color:MUT,fontWeight:600,marginBottom:6,whiteSpace:"nowrap"}}>{k.label}</div>
+              <div style={{fontSize:17,fontWeight:900,color:k.color,whiteSpace:"nowrap"}}>{k.val}</div>
+            </Card>
+          );
+        })}
+      </div>
+
+      <div style={{display:"grid",gap:10,marginBottom:14}}>
+        {gStats.map(function(g){
+          return(
+            <div key={g.g}
+              onClick={function(){setTab("inventory");}}
+              style={{borderRadius:14,padding:"16px 18px",background:CARD,
+                border:"1px solid "+g.col+"40",position:"relative",overflow:"hidden",
+                cursor:"pointer",transition:"all 0.18s"}}
+              onMouseOver={function(e){e.currentTarget.style.transform="translateY(-2px)";}}
+              onMouseOut={function(e){e.currentTarget.style.transform="translateY(0)";}}
+            >
+              
+              
+              <div style={{display:"flex",alignItems:"center",gap:12,marginBottom:10}}>
+                <div style={{minWidth:42,height:42,padding:"0 10px",borderRadius:12,background:g.grad,
+                  display:"flex",alignItems:"center",justifyContent:"center",fontSize:13,fontWeight:800,whiteSpace:"nowrap",flexShrink:0}}>{g.icon}</div>
+                <div style={{flex:1}}>
+                  <div style={{fontWeight:800,fontSize:16,color:g.col}}>{g.g}</div>
+                  <div style={{fontSize:12,color:MUT}}>{GDSC[g.g]}</div>
+                </div>
+                <div style={{textAlign:"right"}}>
+                  <div style={{fontSize:20,fontWeight:900,color:WHT}}>{comma(g.stock)}<span style={{fontSize:12,color:MUT,fontWeight:400}}>kg</span></div>
+                  <div style={{fontSize:12,color:MUT}}>{g.count}종{g.zero>0&&<span style={{color:RED}}> 없음 {g.zero}종</span>}</div>
+                </div>
+                <span style={{color:g.col,fontSize:18,marginLeft:4,opacity:0.6}}>&gt;</span>
+              </div>
+              <div style={{background:BRD2,borderRadius:99,height:5}}>
+                <div style={{width:(total>0?g.stock/total*100:0)+"%",height:"100%",background:g.grad,borderRadius:99}}/>
+              </div>
+            </div>
+          );
+        })}
+      </div>
+
+      <Card style={{padding:"16px",marginBottom:12}}>
+        <div style={{fontWeight:700,fontSize:15,color:WHT,marginBottom:12}}>[차트] 최근 7일 입출고</div>
+        <div style={{display:"flex",alignItems:"flex-end",gap:3,height:90}}>
+          {last7.map(function(d,i){
+            return(
+              <div key={i} style={{flex:1,display:"flex",flexDirection:"column",alignItems:"center",gap:3}}>
+                <div style={{display:"flex",gap:1,alignItems:"flex-end",height:72}}>
+                  <div style={{width:13,background:d.isToday?GRN:GRN+"55",borderRadius:"2px 2px 0 0",
+                    height:(d.in/mb*72)+"px",minHeight:d.in?3:0}}/>
+                  <div style={{width:13,background:d.isToday?RED:RED+"55",borderRadius:"2px 2px 0 0",
+                    height:(d.out/mb*72)+"px",minHeight:d.out?3:0}}/>
+                </div>
+                <div style={{fontSize:9,color:d.isToday?ACC:MUT,fontWeight:d.isToday?700:400}}>{d.label}</div>
+              </div>
+            );
+          })}
+        </div>
+        <div style={{display:"flex",gap:14,marginTop:8}}>
+          <span style={{fontSize:12,color:GRN,display:"flex",alignItems:"center",gap:4}}>
+            <span style={{width:8,height:8,background:GRN,borderRadius:2,display:"inline-block"}}/>입고
+          </span>
+          <span style={{fontSize:12,color:RED,display:"flex",alignItems:"center",gap:4}}>
+            <span style={{width:8,height:8,background:RED,borderRadius:2,display:"inline-block"}}/>출고
+          </span>
+        </div>
+      </Card>
+
+      <div style={{display:"grid",gridTemplateColumns:"1fr 1fr",gap:10,marginBottom:12}}>
+        {[
+          {icon:"[차트]",label:"월별분석",sub:"입출고 추이",color:"#F472B6",nav:"monthly"},
+          {icon:"[예측]",label:"수요예측",sub:"재고 소진 예측",color:YLW,nav:"forecast"},
+        ].map(function(b){
+          return(
+            <div key={b.nav} onClick={function(){setTab(b.nav);}}
+              style={{background:CARD,border:"1px solid "+b.color+"30",borderRadius:14,
+                padding:"14px 16px",cursor:"pointer",display:"flex",alignItems:"center",gap:12,transition:"all 0.15s"}}
+              onMouseOver={function(e){e.currentTarget.style.transform="translateY(-2px)";}}
+              onMouseOut={function(e){e.currentTarget.style.transform="translateY(0)";}}
+            >
+              <div style={{minWidth:44,height:44,padding:"0 10px",borderRadius:12,
+                background:"linear-gradient(135deg,"+b.color+","+b.color+"99)",
+                display:"flex",alignItems:"center",justifyContent:"center",fontSize:13,fontWeight:800,whiteSpace:"nowrap",flexShrink:0}}>{b.icon}</div>
+              <div style={{flex:1}}>
+                <div style={{fontWeight:800,fontSize:15,color:b.color}}>{b.label}</div>
+                <div style={{fontSize:13,color:MUT}}>{b.sub}</div>
+              </div>
+              <span style={{color:b.color,fontSize:20}}>&gt;</span>
+            </div>
+          );
+        })}
+      </div>
+
+      <Card>
+        <div style={{padding:"13px 16px",borderBottom:"1px solid "+BRD2,display:"flex",
+          justifyContent:"space-between",alignItems:"center"}}>
+          <span style={{fontWeight:700,fontSize:15,color:WHT}}>[처리] 최근 활동</span>
+          {isAdmin&&<button onClick={function(){setTab("inout");}}
+            style={{background:"rgba(29,111,232,0.15)",border:"1px solid "+ACC,
+              borderRadius:8,color:ACCL,padding:"5px 12px",cursor:"pointer",fontSize:13,fontWeight:700}}>
+            전체보기 &gt;
+          </button>}
+        </div>
+        {logs.slice(0,6).map(function(l){
+          return(
+            <div key={l.id} style={{display:"flex",alignItems:"center",gap:10,
+              padding:"11px 16px",borderBottom:"1px solid "+BRD2}}>
+              <span style={{background:l.type==="입고"?"rgba(16,185,129,0.12)":"rgba(244,63,94,0.12)",
+                color:l.type==="입고"?GRN:RED,borderRadius:6,padding:"4px 10px",
+                fontSize:13,fontWeight:800,flexShrink:0}}>{l.type}</span>
+              <div style={{flex:1,minWidth:0}}>
+                <div style={{fontWeight:700,fontSize:14,color:TXTH,
+                  overflow:"hidden",textOverflow:"ellipsis",whiteSpace:"nowrap"}}>{l.itemName}</div>
+                <div style={{fontSize:12,color:MUT}}>{l.group}</div>
+              </div>
+              <div style={{textAlign:"right",flexShrink:0}}>
+                <div style={{fontWeight:900,fontSize:16,color:WHT}}>{comma(l.qty)}<span style={{fontSize:11,color:MUT,fontWeight:400}}>{l.unit}</span></div>
+                <div style={{fontSize:11,color:MUT}}>{l.time}</div>
+              </div>
+            </div>
+          );
+        })}
+      </Card>
+
+      {zero.length>0&&(
+        <div onClick={function(){setModal("zero");}}
+          style={{background:"rgba(244,63,94,0.06)",border:"1px solid rgba(244,63,94,0.25)",
+            borderRadius:14,padding:"14px 16px",marginTop:12,cursor:"pointer"}}
+          onMouseOver={function(e){e.currentTarget.style.background="rgba(244,63,94,0.1)";}}
+          onMouseOut={function(e){e.currentTarget.style.background="rgba(244,63,94,0.06)";}}
+        >
+          <div style={{display:"flex",justifyContent:"space-between",alignItems:"center",marginBottom:10}}>
+            <span style={{color:RED,fontWeight:700,fontSize:15}}>{"[경고] 재고 없음 ("+zero.length+"종)"}</span>
+            <span style={{color:RED,fontSize:13,fontWeight:700}}>자세히 보기 [검색]</span>
+          </div>
+          <div style={{display:"flex",flexWrap:"wrap",gap:8}}>
+            {zero.map(function(i){
+              return(
+                <span key={i.id} style={{background:"rgba(244,63,94,0.1)",border:"1px solid rgba(244,63,94,0.3)",
+                  color:RED,borderRadius:8,padding:"4px 12px",fontSize:13,fontWeight:600}}>
+                  {GICO[i.group]} {i.name}
+                </span>
+              );
+            })}
+          </div>
+        </div>
+      )}
+
+      {isAdmin&&(
+        <div onClick={function(){setModal("visits");}}
+          style={{marginTop:12,background:CARD,border:"1px solid "+PRP+"30",borderRadius:14,
+            padding:"13px 16px",cursor:"pointer",display:"flex",alignItems:"center",justifyContent:"space-between"}}
+          onMouseOver={function(e){e.currentTarget.style.transform="translateY(-2px)";}}
+          onMouseOut={function(e){e.currentTarget.style.transform="translateY(0)";}}
+        >
+          <div style={{display:"flex",alignItems:"center",gap:10}}>
+            <div style={{minWidth:34,height:34,padding:"0 8px",borderRadius:9,background:"rgba(129,140,248,0.18)",
+              display:"flex",alignItems:"center",justifyContent:"center",fontSize:11,fontWeight:800,whiteSpace:"nowrap"}}>[방문]</div>
+            <div>
+              <div style={{fontSize:13,color:MUT}}>방문자 현황 (관리자 전용)</div>
+              <div style={{fontSize:12,color:PRP,marginTop:1}}>{"누적 로그인 "+visits.length+"회"}</div>
+            </div>
+          </div>
+          <span style={{color:PRP,fontSize:18,opacity:0.6}}>&gt;</span>
+        </div>
+      )}
+
+      {modal&&(
+        <div onClick={function(){setModal(null);}}
+          style={{position:"fixed",inset:0,background:"rgba(0,0,0,0.75)",zIndex:500,
+            display:"flex",alignItems:"flex-end",backdropFilter:"blur(4px)"}}>
+          <div onClick={function(e){e.stopPropagation();}}
+            style={{background:CARD,borderRadius:"22px 22px 0 0",border:"1px solid "+BRD,
+              width:"100%",maxWidth:640,margin:"0 auto",maxHeight:"80vh",overflowY:"auto",paddingBottom:32}}>
+            <div style={{display:"flex",justifyContent:"center",paddingTop:12,marginBottom:4}}>
+              <div style={{width:36,height:4,background:BRD,borderRadius:99}}/>
+            </div>
+            <div style={{position:"sticky",top:0,background:CARD,padding:"12px 20px 14px",
+              borderBottom:"1px solid "+BRD2,display:"flex",alignItems:"center",justifyContent:"space-between",zIndex:1}}>
+              <div style={{fontWeight:800,fontSize:18,color:WHT}}>
+                {modal==="all"&&("[제품] 전체 품목 ("+items.length+"종)")}
+                {modal==="total"&&"[통계] 총 재고량 현황"}
+                {modal==="zero"&&("[위험] 재고 없음 ("+zero.length+"종)")}
+                {modal==="today"&&("[오늘] 오늘 입출고 ("+tLogs.length+"건)")}
+                {modal==="visits"&&("[방문] 방문자 현황 ("+visits.length+"회)")}
+              </div>
+              <button onClick={function(){setModal(null);}}
+                style={{background:SURF,border:"1px solid "+BRD,borderRadius:10,color:MUT,
+                  padding:"6px 14px",cursor:"pointer",fontSize:15,fontWeight:700}}>[X] 닫기</button>
+            </div>
+            <div style={{padding:"16px"}}>
+              {modal==="all"&&GROUPS.map(function(g){
+                const gi=items.filter(function(i){return i.group===g;});
+                return(
+                  <div key={g} style={{marginBottom:16}}>
+                    <div style={{display:"flex",alignItems:"center",gap:8,marginBottom:8,
+                      padding:"8px 12px",background:GCOL[g]+"0A",border:"1px solid "+GCOL[g]+"25",borderRadius:10}}>
+                      <span style={{fontSize:17}}>{GICO[g]}</span>
+                      <span style={{fontWeight:700,fontSize:14,color:GCOL[g]}}>{g}</span>
+                      <span style={{fontSize:13,color:MUT}}>{gi.length}종</span>
+                      <span style={{marginLeft:"auto",fontSize:13,fontWeight:700,color:GCOL[g]}}>{comma(gi.reduce(function(s,i){return s+i.stock;},0))}kg</span>
+                    </div>
+                    {gi.map(function(item){
+                      return(
+                        <div key={item.id} style={{display:"flex",alignItems:"center",gap:10,
+                          padding:"10px 13px",background:SURF,borderRadius:10,marginBottom:5,
+                          border:"1px solid "+(item.stock===0?"rgba(244,63,94,0.3)":BRD2)}}>
+                          <div style={{flex:1,minWidth:0}}>
+                            <div style={{fontWeight:700,fontSize:14,color:TXTH,
+                              overflow:"hidden",textOverflow:"ellipsis",whiteSpace:"nowrap"}}>{item.name}</div>
+                            <div style={{fontSize:11,color:MUT}}>{""+item.loc+" - "+item.id}</div>
+                          </div>
+                          <div style={{textAlign:"right",flexShrink:0}}>
+                            <div style={{fontWeight:800,fontSize:16,color:item.stock===0?RED:WHT}}>{comma(item.stock)}<span style={{fontSize:11,color:MUT,fontWeight:400}}>{item.unit}</span></div>
+                            <div style={{fontSize:11,color:item.stock===0?RED:GRN,fontWeight:600}}>{item.stock===0?"재고없음":"정상"}</div>
+                          </div>
+                        </div>
+                      );
+                    })}
+                  </div>
+                );
+              })}
+              {modal==="total"&&(
+                <div>
+                  <div style={{background:SURF,borderRadius:14,padding:"18px",marginBottom:14,textAlign:"center",border:"1px solid "+SKY+"30"}}>
+                    <div style={{fontSize:13,color:MUT,marginBottom:5}}>전체 합계</div>
+                    <div style={{fontSize:34,fontWeight:900,color:SKY}}>{comma(total)}<span style={{fontSize:15,color:MUT,fontWeight:400}}>kg</span></div>
+                  </div>
+                  {GROUPS.map(function(g){
+                    const gs=items.filter(function(i){return i.group===g;});
+                    const gT=gs.reduce(function(s,i){return s+i.stock;},0);
+                    const pct=total>0?Math.round(gT/total*100):0;
+                    return(
+                      <div key={g} style={{marginBottom:14}}>
+                        <div style={{display:"flex",justifyContent:"space-between",alignItems:"center",marginBottom:6}}>
+                          <span style={{fontWeight:700,fontSize:14,color:GCOL[g]}}>{GICO[g]} {g}</span>
+                          <span style={{fontSize:14,fontWeight:800,color:WHT}}>{comma(gT)}<span style={{fontSize:11,color:MUT,fontWeight:400}}>kg</span> <span style={{fontSize:12,color:GCOL[g]}}>{pct}%</span></span>
+                        </div>
+                        <div style={{background:BRD2,borderRadius:99,height:8,overflow:"hidden",marginBottom:6}}>
+                          <div style={{width:pct+"%",height:"100%",background:GGRAD[g],borderRadius:99}}/>
+                        </div>
+                        {gs.sort(function(a,b){return b.stock-a.stock;}).slice(0,4).map(function(item){
+                          return(
+                            <div key={item.id} style={{display:"flex",alignItems:"center",
+                              padding:"7px 11px",background:SURF,borderRadius:7,marginBottom:4,border:"1px solid "+BRD2}}>
+                              <span style={{flex:1,fontSize:13,color:TXTH,fontWeight:600,
+                                overflow:"hidden",textOverflow:"ellipsis",whiteSpace:"nowrap"}}>{item.name}</span>
+                              <span style={{fontSize:14,fontWeight:800,color:item.stock===0?RED:WHT,flexShrink:0,marginLeft:8}}>{comma(item.stock)}<span style={{fontSize:10,color:MUT,fontWeight:400}}>{item.unit}</span></span>
+                            </div>
+                          );
+                        })}
+                        {gs.length>4&&<div style={{fontSize:12,color:MUT,textAlign:"center"}}>{"외 "+(gs.length-4)+"종"}</div>}
+                      </div>
+                    );
+                  })}
+                </div>
+              )}
+              {modal==="zero"&&(
+                <div>
+                  {zero.length===0?(
+                    <div style={{textAlign:"center",padding:"40px",color:GRN}}>
+                      <div style={{fontSize:44,marginBottom:10}}>[완료]</div>
+                      <div style={{fontSize:16,fontWeight:700}}>재고 없음 품목이 없습니다!</div>
+                    </div>
+                  ):(
+                    <div>
+                      {GROUPS.map(function(g){
+                        const gz=zero.filter(function(i){return i.group===g;});
+                        if(!gz.length)return null;
+                        return(
+                          <div key={g} style={{marginBottom:12}}>
+                            <div style={{fontSize:13,color:GCOL[g],fontWeight:700,marginBottom:7}}>{GICO[g]} {g} ({gz.length}종)</div>
+                            {gz.map(function(item){
+                              return(
+                                <div key={item.id} style={{display:"flex",alignItems:"center",gap:12,
+                                  padding:"12px 14px",background:SURF,borderRadius:10,marginBottom:5,
+                                  border:"1px solid rgba(244,63,94,0.3)"}}>
+                                  <div style={{minWidth:38,height:38,padding:"0 6px",borderRadius:9,background:"rgba(244,63,94,0.1)",
+                                    display:"flex",alignItems:"center",justifyContent:"center",fontSize:11,fontWeight:800,whiteSpace:"nowrap",flexShrink:0}}>[빈함]</div>
+                                  <div style={{flex:1,minWidth:0}}>
+                                    <div style={{fontWeight:700,fontSize:15,color:TXTH,
+                                      overflow:"hidden",textOverflow:"ellipsis",whiteSpace:"nowrap"}}>{item.name}</div>
+                                    <div style={{fontSize:12,color:MUT}}>{""+item.loc+" - "+item.id}</div>
+                                  </div>
+                                  <span style={{background:"rgba(244,63,94,0.12)",color:RED,
+                                    borderRadius:7,padding:"4px 11px",fontSize:13,fontWeight:800,flexShrink:0}}>재고없음</span>
+                                </div>
+                              );
+                            })}
+                          </div>
+                        );
+                      })}
+                      <button onClick={function(){setModal(null);setTab("inventory");}}
+                        style={{width:"100%",padding:"13px",borderRadius:12,border:"none",cursor:"pointer",
+                          background:"linear-gradient(135deg,#1D6FE8,#38BDF8)",
+                          color:"#fff",fontWeight:800,fontSize:15,marginTop:8}}>
+                        재고현황 탭에서 확인하기 &gt;
+                      </button>
+                    </div>
+                  )}
+                </div>
+              )}
+              {modal==="today"&&(
+                <div>
+                  <div style={{display:"grid",gridTemplateColumns:"1fr 1fr",gap:10,marginBottom:14}}>
+                    <Card style={{padding:"14px",textAlign:"center"}}>
+                      <div style={{fontSize:12,color:MUT,marginBottom:4}}>오늘 입고</div>
+                      <div style={{fontSize:20,fontWeight:900,color:GRN}}>{comma(tIn)}<span style={{fontSize:12,color:MUT,fontWeight:400}}>kg</span></div>
+                    </Card>
+                    <Card style={{padding:"14px",textAlign:"center"}}>
+                      <div style={{fontSize:12,color:MUT,marginBottom:4}}>오늘 출고</div>
+                      <div style={{fontSize:20,fontWeight:900,color:RED}}>{comma(tOut)}<span style={{fontSize:12,color:MUT,fontWeight:400}}>kg</span></div>
+                    </Card>
+                  </div>
+                  {tLogs.length===0?(
+                    <div style={{textAlign:"center",padding:"40px",color:MUT,fontSize:15}}>오늘 입출고 이력이 없습니다</div>
+                  ):(
+                    <Card style={{overflow:"hidden"}}>
+                      {tLogs.map(function(l,li){
+                        return(
+                          <div key={l.id} style={{display:"flex",alignItems:"center",gap:8,
+                            padding:"10px 13px",borderBottom:li===tLogs.length-1?"none":"1px solid "+BRD2}}>
+                            <span style={{background:l.type==="입고"?"rgba(16,185,129,0.12)":"rgba(244,63,94,0.12)",
+                              color:l.type==="입고"?GRN:RED,borderRadius:6,padding:"2px 8px",fontSize:11,fontWeight:800,flexShrink:0}}>{l.type}</span>
+                            <div style={{flex:1,minWidth:0,overflow:"hidden"}}>
+                              <div style={{fontWeight:700,fontSize:14,color:TXTH,overflow:"hidden",textOverflow:"ellipsis",whiteSpace:"nowrap"}}>{l.itemName}</div>
+                              <div style={{fontSize:11,color:MUT,overflow:"hidden",textOverflow:"ellipsis",whiteSpace:"nowrap"}}>{l.partner}</div>
+                            </div>
+                            <div style={{textAlign:"right",flexShrink:0}}>
+                              <div style={{fontWeight:900,fontSize:15,color:WHT}}>{comma(l.qty)}<span style={{fontSize:11,color:MUT,fontWeight:400}}>{l.unit}</span></div>
+                              <div style={{fontSize:11,color:MUT}}>{l.time}</div>
+                            </div>
+                          </div>
+                        );
+                      })}
+                    </Card>
+                  )}
+                </div>
+              )}
+              {modal==="visits"&&(function(){
+                var byUser={};
+                visits.forEach(function(v){
+                  if(!byUser[v.userName])byUser[v.userName]={count:0,role:v.role};
+                  byUser[v.userName].count++;
+                });
+                var userList=Object.keys(byUser).map(function(name){
+                  return{name:name,count:byUser[name].count,role:byUser[name].role};
+                }).sort(function(a,b){return b.count-a.count;});
+                return(
+                  <div>
+                    <div style={{background:SURF,borderRadius:14,padding:"18px",marginBottom:16,textAlign:"center",border:"1px solid "+PRP+"30"}}>
+                      <div style={{fontSize:13,color:MUT,marginBottom:5}}>전체 누적 로그인</div>
+                      <div style={{fontSize:34,fontWeight:900,color:PRP}}>{visits.length}<span style={{fontSize:15,color:MUT,fontWeight:400}}>회</span></div>
+                    </div>
+                    <div style={{fontWeight:700,fontSize:14,color:MUT,marginBottom:10}}>사용자별 로그인 횟수</div>
+                    <div style={{display:"grid",gap:7,marginBottom:18}}>
+                      {userList.length===0?(
+                        <div style={{textAlign:"center",padding:"20px",color:MUT,fontSize:14}}>로그인 기록이 없습니다</div>
+                      ):userList.map(function(u){
+                        return(
+                          <div key={u.name} style={{display:"flex",alignItems:"center",gap:10,
+                            padding:"11px 14px",background:SURF,borderRadius:10,border:"1px solid "+BRD2}}>
+                            <span style={{fontSize:11,color:u.role==="admin"?ACCL:YLW,fontWeight:700,
+                              background:u.role==="admin"?"rgba(29,111,232,0.12)":"rgba(245,158,11,0.12)",
+                              borderRadius:6,padding:"2px 8px",flexShrink:0}}>{u.role==="admin"?"관리자":"조회"}</span>
+                            <span style={{flex:1,fontSize:14,fontWeight:700,color:TXTH}}>{u.name}</span>
+                            <span style={{fontSize:16,fontWeight:900,color:PRP}}>{u.count}<span style={{fontSize:12,color:MUT,fontWeight:400}}>회</span></span>
+                          </div>
+                        );
+                      })}
+                    </div>
+                    <div style={{fontWeight:700,fontSize:14,color:MUT,marginBottom:10}}>최근 로그인 기록</div>
+                    {visits.length===0?(
+                      <div style={{textAlign:"center",padding:"30px",color:MUT,fontSize:14}}>로그인 기록이 없습니다</div>
+                    ):(
+                      <Card style={{overflow:"hidden"}}>
+                        {visits.slice(0,30).map(function(v,vi){
+                          return(
+                            <div key={v.id} style={{display:"flex",alignItems:"center",gap:10,
+                              padding:"10px 13px",borderBottom:vi===Math.min(29,visits.length-1)?"none":"1px solid "+BRD2}}>
+                              <span style={{fontSize:11,color:v.role==="admin"?ACCL:YLW,fontWeight:700,
+                                background:v.role==="admin"?"rgba(29,111,232,0.12)":"rgba(245,158,11,0.12)",
+                                borderRadius:6,padding:"2px 8px",flexShrink:0}}>{v.role==="admin"?"관리자":"조회"}</span>
+                              <span style={{flex:1,fontSize:14,fontWeight:600,color:TXTH}}>{v.userName}</span>
+                              <span style={{fontSize:12,color:MUT,flexShrink:0}}>{v.date+" "+v.time}</span>
+                            </div>
+                          );
+                        })}
+                      </Card>
+                    )}
+                  </div>
+                );
+              })()}
+            </div>
+          </div>
+        </div>
+      )}
+    </div>
+  );
+}
+
+function Produce({items,setItems,logs,setLogs,fmls,setFmls,pLogs,setPLogs,showToast,user}){
+  const [mode,setMode]=useState("execute");
+  const [selF,setSelF]=useState(null);
+  const [kg,setKg]=useState("");
+  const [memo,setMemo]=useState("");
+  const [prev,setPrev]=useState(null);
+  const [nf,setNf]=useState({productName:"",productId:"",desc:"",ingredients:[]});
+  const [nIng,setNIng]=useState({itemId:"",kgPer250:""});
+
+  useEffect(function(){
+    if(!selF||!kg||isNaN(parseFloat(kg)))return setPrev(null);
+    const kgN=parseFloat(kg);
+    const batches=kgN/250;
+    const reqs=selF.ingredients.map(function(ing){
+      const item=items.find(function(i){return i.id===ing.itemId;});
+      const need=Math.round(ing.kgPer250*batches*100)/100;
+      return Object.assign({},ing,{need:need,current:item?item.stock:0,ok:item?item.stock>=need:false});
+    });
+    setPrev({kgN,batches,reqs,canProduce:reqs.every(function(r){return r.ok;})});
+  },[selF,kg,items]);
+
+  function executeProduce(){
+    if(!selF||!prev||!prev.canProduce)return;
+    const ds=today(),ts=nowTime();
+    var ni=items.map(function(item){
+      var req=prev.reqs.find(function(r){return r.itemId===item.id;});
+      if(req)return Object.assign({},item,{stock:Math.round((item.stock-req.need)*100)/100});
+      return item;
+    });
+    ni=ni.map(function(i){
+      if(i.id===selF.productId)return Object.assign({},i,{stock:Math.round((i.stock+prev.kgN)*100)/100});
+      return i;
+    });
+    setItems(ni);
+    const plog={id:Date.now(),date:ds,time:ts,formulaId:selF.id,formulaName:selF.productName,
+      productId:selF.productId,outputKg:prev.kgN,batches:prev.batches,
+      ingredients:prev.reqs.map(function(r){return{name:r.name,used:r.need};}),
+      memo:memo,by:user.name};
+    setPLogs(function(p){return [plog].concat(p);});
+    const inLog={id:Date.now()+1,date:ds,time:ts,itemId:selF.productId,itemName:selF.productName,
+      group:"비에스",type:"입고",qty:prev.kgN,unit:"kg",partner:"자체생산",memo:"제조지시서 "+selF.id,by:user.name};
+    setLogs(function(p){return [inLog].concat(p);});
+    showToast("[완료] 생산 완료! "+selF.productName+" "+comma(prev.kgN)+"kg");
+    setSelF(null);setKg("");setMemo("");setPrev(null);
+    apiPost("addProdLog",{data:prodLogToRow(plog)}).catch(function(){});
+    apiPost("addLog",{data:logToRow(inLog)}).catch(function(){});
+    prev.reqs.forEach(function(r){
+      var it=ni.find(function(x){return x.id===r.itemId;});
+      if(it)apiPost("updateItem",{id:r.itemId,data:{"재고량":it.stock}}).catch(function(){});
+    });
+    var prodItem=ni.find(function(x){return x.id===selF.productId;});
+    if(prodItem)apiPost("updateItem",{id:selF.productId,data:{"재고량":prodItem.stock}}).catch(function(){});
+  }
+
+  function addIng(){
+    if(!nIng.itemId||!nIng.kgPer250){showToast("원료와 배합량을 입력하세요",RED);return;}
+    const item=items.find(function(i){return i.id===nIng.itemId;});
+    if(!item)return;
+    if(nf.ingredients.find(function(i){return i.itemId===nIng.itemId;})){showToast("이미 추가된 원료입니다",YLW);return;}
+    setNf(function(p){return Object.assign({},p,{ingredients:p.ingredients.concat([{itemId:nIng.itemId,name:item.name,kgPer250:parseFloat(nIng.kgPer250)}])});});
+    setNIng({itemId:"",kgPer250:""});
+  }
+
+  function saveFml(){
+    if(!nf.productName||!nf.productId||nf.ingredients.length===0){showToast("제품명, 완제품, 원료를 모두 입력하세요",RED);return;}
+    const fid="F"+String(fmls.length+1).padStart(3,"0");
+    const newFml=Object.assign({},nf,{id:fid});
+    setFmls(function(p){return p.concat([newFml]);});
+    showToast("[완료] 제조지시서 등록 완료 - "+nf.productName);
+    setNf({productName:"",productId:"",desc:"",ingredients:[]});
+    setMode("execute");
+    apiPost("addFormula",{rows:formulaToRows(newFml)}).catch(function(){showToast("[주의] 서버 저장 실패",YLW);});
+  }
+
+  const rawItems=items.filter(function(i){return i.group==="원료";});
+  const btnStyle=function(active,col){return{padding:"10px 4px",borderRadius:12,cursor:"pointer",
+    border:"2px solid "+(active?col:BRD),background:active?col+"20":"transparent",
+    color:active?col:MUT,fontWeight:active?800:600,
+    display:"flex",flexDirection:"column",alignItems:"center",gap:4};};
+
+  return(
+    <div>
+      <div style={{marginBottom:16,paddingBottom:14,borderBottom:"1px solid "+BRD2}}>
+        <div style={{display:"flex",alignItems:"center",gap:10,marginBottom:12}}>
+          <div style={{minWidth:40,height:40,padding:"0 8px",borderRadius:10,flexShrink:0,
+            background:"rgba(129,140,248,0.18)",border:"1px solid rgba(129,140,248,0.35)",
+            display:"flex",alignItems:"center",justifyContent:"center",fontSize:13,fontWeight:800,whiteSpace:"nowrap"}}>[공장]</div>
+          <div>
+            <div style={{fontSize:20,fontWeight:900,color:WHT}}>생산 관리</div>
+            <div style={{fontSize:13,color:MUT}}>제조지시서 기반 생산 실행</div>
+          </div>
+        </div>
+        <div style={{display:"grid",gridTemplateColumns:"1fr 1fr 1fr",gap:8}}>
+          {[{k:"execute",icon:"[실행]",label:"생산실행"},{k:"register",icon:"[문서]",label:"배합비등록"},{k:"history",icon:"[이력]",label:"생산이력"}].map(function(b){
+            return(
+              <button key={b.k} onClick={function(){setMode(b.k);}} style={btnStyle(mode===b.k,PRP)}>
+                <span style={{fontSize:20}}>{b.icon}</span>
+                <span style={{fontSize:13}}>{b.label}</span>
+              </button>
+            );
+          })}
+        </div>
+      </div>
+
+      {mode==="execute"&&(
+        <div>
+          <div style={{fontSize:14,color:MUT,marginBottom:14,fontWeight:600}}>[문서] 제조지시서를 선택하고 생산량을 입력하세요</div>
+          <div style={{display:"grid",gap:10,marginBottom:16}}>
+            {fmls.map(function(f){
+              const on=selF&&selF.id===f.id;
+              const prod=items.find(function(i){return i.id===f.productId;});
+              return(
+                <div key={f.id} onClick={function(){setSelF(on?null:f);setKg("");setPrev(null);}}
+                  style={{background:on?"rgba(129,140,248,0.1)":CARD,
+                    border:"2px solid "+(on?PRP:BRD),borderRadius:14,
+                    padding:"15px 17px",cursor:"pointer",transition:"all 0.18s"}}>
+                  <div style={{display:"flex",alignItems:"center",justifyContent:"space-between",marginBottom:10}}>
+                    <div style={{display:"flex",alignItems:"center",gap:10}}>
+                      <div style={{minWidth:36,height:36,padding:"0 7px",borderRadius:9,background:"rgba(129,140,248,0.2)",
+                        display:"flex",alignItems:"center",justifyContent:"center",fontSize:11,fontWeight:800,whiteSpace:"nowrap"}}>[공장]</div>
+                      <div>
+                        <div style={{fontWeight:800,fontSize:15,color:on?PRP:TXTH}}>{f.productName}</div>
+                        <div style={{fontSize:12,color:MUT}}>{f.id}{f.desc?" - "+f.desc:""}</div>
+                      </div>
+                    </div>
+                    <div style={{textAlign:"right"}}>
+                      <div style={{fontSize:12,color:MUT}}>현재 재고</div>
+                      <div style={{fontSize:15,fontWeight:800,color:GRN}}>{prod?comma(prod.stock):"-"}<span style={{fontSize:11,color:MUT,fontWeight:400}}>kg</span></div>
+                    </div>
+                    <button onClick={function(e){
+                        e.stopPropagation();
+                        if(on){setSelF(null);setKg("");setPrev(null);}
+                        setFmls(function(p){return p.filter(function(x){return x.id!==f.id;});});
+                        showToast("[삭제] 제조지시서 삭제 - "+f.productName,YLW);
+                        apiPost("deleteFormula",{id:f.id}).catch(function(){});
+                      }}
+                      style={{background:"transparent",border:"1px solid rgba(244,63,94,0.35)",
+                        borderRadius:7,color:RED,padding:"6px 10px",cursor:"pointer",
+                        fontSize:12,fontWeight:700,marginLeft:8,flexShrink:0}}>삭제</button>
+                  </div>
+                  <div style={{display:"flex",flexWrap:"wrap",gap:5}}>
+                    {f.ingredients.map(function(ing){
+                      return(
+                        <span key={ing.itemId} style={{background:SURF,border:"1px solid "+BRD,
+                          borderRadius:5,padding:"2px 8px",fontSize:12,color:TXT}}>
+                          {ing.name} <span style={{color:SKY,fontWeight:700}}>{ing.kgPer250}</span><span style={{color:MUT,fontSize:11}}>kg/250</span>
+                        </span>
+                      );
+                    })}
+                  </div>
+                </div>
+              );
+            })}
+          </div>
+
+          {selF&&(
+            <Card style={{padding:18,border:"1px solid "+PRP+"40"}}>
+              <div style={{fontWeight:700,fontSize:15,color:PRP,marginBottom:14}}>{"[실행] 생산 실행 - "+selF.productName}</div>
+              <div style={{marginBottom:14}}>
+                <div style={{fontSize:13,color:MUT,marginBottom:8,fontWeight:700}}>생산량 (kg)</div>
+                <input type="number" placeholder="예: 1000 (1톤)" value={kg}
+                  onChange={function(e){setKg(e.target.value);}}
+                  style={{width:"100%",background:SURF,border:"1px solid "+BRD,borderRadius:10,
+                    color:TXTH,padding:"13px 16px",fontSize:20,fontWeight:800}}/>
+                <div style={{display:"grid",gridTemplateColumns:"repeat(3,1fr)",gap:8,marginTop:10}}>
+                  {[250,500,750,1000,1500,2000].map(function(v){
+                    return(
+                      <button key={v} onClick={function(){setKg(String(v));}}
+                        style={{background:kg===String(v)?"rgba(129,140,248,0.18)":"transparent",
+                          border:"2px solid "+(kg===String(v)?PRP:BRD),
+                          borderRadius:10,color:kg===String(v)?PRP:MUT,
+                          padding:"9px 4px",cursor:"pointer",fontSize:14,fontWeight:600}}>
+                        {v>=1000?v/1000+"톤":v+"kg"}
+                      </button>
+                    );
+                  })}
+                </div>
+              </div>
+              <div style={{marginBottom:14}}>
+                <div style={{fontSize:13,color:MUT,marginBottom:8,fontWeight:700}}>메모</div>
+                <input type="text" placeholder="생산 메모 (선택)" value={memo}
+                  onChange={function(e){setMemo(e.target.value);}}
+                  style={{width:"100%",background:SURF,border:"1px solid "+BRD,borderRadius:10,
+                    color:TXTH,padding:"11px 14px",fontSize:14}}/>
+              </div>
+              {prev&&(
+                <div style={{background:SURF,border:"1px solid "+(prev.canProduce?GRN:RED)+"40",borderRadius:12,padding:"14px",marginBottom:14}}>
+                  <div style={{display:"flex",alignItems:"center",gap:8,flexWrap:"wrap",marginBottom:10}}>
+                    <span style={{fontSize:13,color:MUT}}>생산량</span>
+                    <span style={{fontSize:17,fontWeight:900,color:WHT}}>{comma(prev.kgN)}kg</span>
+                    <span style={{fontSize:13,color:MUT}}>/ 250kg =</span>
+                    <span style={{fontSize:17,fontWeight:900,color:PRP}}>{prev.batches.toFixed(1)}배치</span>
+                  </div>
+                  <div style={{fontWeight:700,fontSize:14,color:prev.canProduce?GRN:RED,marginBottom:10}}>
+                    {prev.canProduce?"[완료] 생산 가능":"[오류] 원료 부족"}
+                  </div>
+                  <div style={{display:"grid",gap:7}}>
+                    {prev.reqs.map(function(r){
+                      return(
+                        <div key={r.itemId} style={{padding:"10px 12px",background:CARD,borderRadius:9,
+                          border:"1px solid "+(r.ok?BRD:"rgba(244,63,94,0.3)")}}>
+                          <div style={{display:"flex",alignItems:"center",gap:8,marginBottom:4}}>
+                            <span style={{width:8,height:8,borderRadius:99,background:r.ok?GRN:RED,flexShrink:0}}/>
+                            <span style={{flex:1,fontSize:14,fontWeight:600,color:TXTH,overflow:"hidden",textOverflow:"ellipsis",whiteSpace:"nowrap"}}>{r.name}</span>
+                            <span style={{fontSize:13,fontWeight:800,color:r.ok?WHT:RED,flexShrink:0}}>{r.ok?"[완료]":"[오류]"}</span>
+                          </div>
+                          <div style={{display:"flex",justifyContent:"space-between",fontSize:13,paddingLeft:16}}>
+                            <span style={{color:MUT}}>필요: <span style={{color:r.ok?WHT:RED,fontWeight:700}}>{comma(r.need)}kg</span></span>
+                            <span style={{color:MUT}}>보유: <span style={{color:r.ok?GRN:RED,fontWeight:700}}>{comma(r.current)}kg</span></span>
+                          </div>
+                        </div>
+                      );
+                    })}
+                  </div>
+                </div>
+              )}
+              <button onClick={executeProduce} disabled={!prev||!prev.canProduce}
+                style={{width:"100%",padding:"15px",borderRadius:12,border:"none",
+                  cursor:prev&&prev.canProduce?"pointer":"not-allowed",
+                  background:prev&&prev.canProduce?"linear-gradient(135deg,#7C3AED,#6D28D9)":"rgba(129,140,248,0.2)",
+                  color:prev&&prev.canProduce?"#fff":MUT,fontWeight:800,fontSize:17}}>
+                [공장] 생산 실행
+              </button>
+            </Card>
+          )}
+          {fmls.length===0&&(
+            <Card style={{padding:"36px",textAlign:"center",color:MUT}}>
+              <div style={{fontSize:30,marginBottom:10}}>[문서]</div>
+              <div style={{fontSize:15,marginBottom:10}}>등록된 제조지시서가 없습니다</div>
+              <button onClick={function(){setMode("register");}}
+                style={{background:"rgba(29,111,232,0.15)",border:"1px solid "+ACC,borderRadius:10,
+                  color:ACCL,padding:"9px 18px",cursor:"pointer",fontSize:14,fontWeight:700}}>
+                배합비 등록하기 &gt;
+              </button>
+            </Card>
+          )}
+        </div>
+      )}
+
+      {mode==="register"&&(
+        <div>
+          <Card style={{padding:18,marginBottom:14}}>
+            <div style={{fontWeight:700,fontSize:15,color:WHT,marginBottom:14}}>[문서] 제조지시서 등록</div>
+            <div style={{marginBottom:13}}>
+              <div style={{fontSize:13,color:MUT,marginBottom:8,fontWeight:700}}>완제품 선택 *</div>
+              <select value={nf.productId} onChange={function(e){
+                  var prod=items.find(function(i){return i.id===e.target.value;});
+                  setNf(function(p){return Object.assign({},p,{productId:e.target.value,productName:prod?prod.name:""});});
+                }}
+                style={{width:"100%",background:SURF,border:"1px solid "+BRD,borderRadius:10,
+                  color:nf.productId?TXTH:MUT,padding:"12px 13px",fontSize:14}}>
+                <option value="">-- 생산할 완제품 선택 --</option>
+                {items.filter(function(i){return i.group==="비에스";}).map(function(i){
+                  return <option key={i.id} value={i.id}>{i.name} (재고: {comma(i.stock)}{i.unit})</option>;
+                })}
+              </select>
+            </div>
+            <div style={{marginBottom:13}}>
+              <div style={{fontSize:13,color:MUT,marginBottom:8,fontWeight:700}}>설명</div>
+              <input type="text" placeholder="제조지시서 설명" value={nf.desc}
+                onChange={function(e){setNf(function(p){return Object.assign({},p,{desc:e.target.value});});}}
+                style={{width:"100%",background:SURF,border:"1px solid "+BRD,borderRadius:10,
+                  color:TXTH,padding:"11px 13px",fontSize:14}}/>
+            </div>
+            <div style={{background:SURF,borderRadius:12,padding:"14px",marginBottom:13}}>
+              <div style={{fontWeight:700,fontSize:13,color:SKY,marginBottom:12}}>[원료] 원료 배합비 (250kg 기준)</div>
+              <div style={{display:"flex",flexDirection:"column",gap:8,marginBottom:10}}>
+                <select value={nIng.itemId} onChange={function(e){setNIng(function(p){return Object.assign({},p,{itemId:e.target.value});});}}
+                  style={{width:"100%",background:CARD,border:"1px solid "+BRD,borderRadius:8,
+                    color:nIng.itemId?TXTH:MUT,padding:"11px 12px",fontSize:14}}>
+                  <option value="">-- 원료 선택 --</option>
+                  {rawItems.map(function(i){return <option key={i.id} value={i.id}>{i.name} (재고: {comma(i.stock)}kg)</option>;})}
+                </select>
+                <div style={{display:"flex",gap:8,alignItems:"center"}}>
+                  <div style={{flex:1,position:"relative"}}>
+                    <input type="number" placeholder="0000" value={nIng.kgPer250}
+                      onChange={function(e){setNIng(function(p){return Object.assign({},p,{kgPer250:e.target.value});});}}
+                      style={{width:"100%",background:SURF,border:"2px solid "+ACC,borderRadius:10,
+                        color:TXTH,padding:"13px 70px 13px 14px",fontSize:20,fontWeight:800}}/>
+                    <span style={{position:"absolute",right:12,top:"50%",transform:"translateY(-50%)",
+                      color:MUT,fontSize:12,fontWeight:600}}>kg/250kg</span>
+                  </div>
+                  <button onClick={addIng} style={{background:"linear-gradient(135deg,"+SKY+",#0EA5E9)",
+                    border:"none",borderRadius:10,color:"#fff",padding:"13px 18px",cursor:"pointer",
+                    fontSize:14,fontWeight:800,flexShrink:0}}>+ 추가</button>
+                </div>
+              </div>
+              {nf.ingredients.length>0&&(
+                <div style={{display:"grid",gap:6}}>
+                  {nf.ingredients.map(function(ing,i){
+                    return(
+                      <div key={ing.itemId} style={{display:"flex",alignItems:"center",gap:10,
+                        padding:"9px 12px",background:CARD,borderRadius:8,border:"1px solid "+BRD}}>
+                        <span style={{flex:1,fontSize:13,fontWeight:600,color:TXTH}}>{ing.name}</span>
+                        <span style={{fontSize:14,fontWeight:800,color:SKY}}>{ing.kgPer250}<span style={{fontSize:11,color:MUT,fontWeight:400}}>kg/250kg</span></span>
+                        <button onClick={function(){setNf(function(p){return Object.assign({},p,{ingredients:p.ingredients.filter(function(_,j){return j!==i;})});});}}
+                          style={{background:"transparent",border:"1px solid rgba(244,63,94,0.3)",
+                            borderRadius:6,color:RED,padding:"3px 8px",cursor:"pointer",fontSize:11}}>삭제</button>
+                      </div>
+                    );
+                  })}
+                  <div style={{padding:"7px 12px",background:"rgba(56,189,248,0.08)",borderRadius:8,
+                    fontSize:13,color:SKY,fontWeight:600}}>
+                    합계: {nf.ingredients.reduce(function(s,i){return s+i.kgPer250;},0)}kg / 250kg 생산
+                  </div>
+                </div>
+              )}
+            </div>
+            <button onClick={saveFml} style={{width:"100%",padding:"14px",borderRadius:12,border:"none",
+              cursor:"pointer",background:"linear-gradient(135deg,#1D6FE8,#38BDF8)",
+              color:"#fff",fontWeight:800,fontSize:15}}>
+              [문서] 제조지시서 저장
+            </button>
+          </Card>
+          {fmls.length>0&&(
+            <div>
+              <div style={{fontWeight:700,fontSize:14,color:MUT,marginBottom:10}}>{"등록된 제조지시서 ("+fmls.length+"개)"}</div>
+              {fmls.map(function(f){
+                return(
+                  <Card key={f.id} style={{padding:"13px 15px",marginBottom:8}}>
+                    <div style={{display:"flex",justifyContent:"space-between",alignItems:"center",marginBottom:7}}>
+                      <div>
+                        <span style={{fontWeight:700,fontSize:14,color:TXTH}}>{f.productName}</span>
+                        <span style={{fontSize:11,color:MUT,marginLeft:7}}>{f.id}</span>
+                      </div>
+                      <button onClick={function(){
+                        setFmls(function(p){return p.filter(function(x){return x.id!==f.id;});});
+                        apiPost("deleteFormula",{id:f.id}).catch(function(){});
+                      }}
+                        style={{background:"transparent",border:"1px solid rgba(244,63,94,0.3)",
+                          borderRadius:6,color:RED,padding:"3px 9px",cursor:"pointer",fontSize:12}}>삭제</button>
+                    </div>
+                    <div style={{display:"flex",flexWrap:"wrap",gap:5}}>
+                      {f.ingredients.map(function(ing){
+                        return(
+                          <span key={ing.itemId} style={{background:SURF,border:"1px solid "+BRD,
+                            borderRadius:5,padding:"2px 7px",fontSize:11,color:TXT}}>
+                            {ing.name} <span style={{color:SKY,fontWeight:700}}>{ing.kgPer250}</span>
+                          </span>
+                        );
+                      })}
+                    </div>
+                  </Card>
+                );
+              })}
+            </div>
+          )}
+        </div>
+      )}
+
+      {mode==="history"&&(
+        <div>
+          {pLogs.length===0?(
+            <Card style={{padding:"36px",textAlign:"center",color:MUT,fontSize:15}}>생산 이력이 없습니다</Card>
+          ):(
+            pLogs.map(function(p){
+              return(
+                <Card key={p.id} style={{padding:"15px",marginBottom:10}}>
+                  <div style={{display:"flex",justifyContent:"space-between",alignItems:"flex-start",marginBottom:9}}>
+                    <div>
+                      <div style={{fontWeight:800,fontSize:15,color:TXTH,marginBottom:3}}>{"[공장] "+p.formulaName}</div>
+                      <div style={{fontSize:12,color:MUT}}>{p.date+" "+p.time+" - "+p.by}</div>
+                    </div>
+                    <div style={{textAlign:"right"}}>
+                      <div style={{fontSize:19,fontWeight:900,color:PRP}}>{"+"+(comma(p.outputKg))}<span style={{fontSize:12,color:MUT,fontWeight:400}}>kg</span></div>
+                      <div style={{fontSize:11,color:MUT}}>{p.batches?p.batches.toFixed(1)+"배치":""}</div>
+                    </div>
+                  </div>
+                  <div style={{display:"flex",flexWrap:"wrap",gap:5}}>
+                    {p.ingredients.map(function(ing,i){
+                      return(
+                        <span key={i} style={{background:SURF,border:"1px solid "+BRD,borderRadius:5,padding:"2px 8px",fontSize:12,color:MUT}}>
+                          {ing.name} <span style={{color:RED}}>{"-"+comma(ing.used)+"kg"}</span>
+                        </span>
+                      );
+                    })}
+                  </div>
+                  {p.memo&&<div style={{fontSize:12,color:MUT,marginTop:6}}>{"[메모] "+p.memo}</div>}
+                </Card>
+              );
+            })
+          )}
+        </div>
+      )}
+    </div>
+  );
+}
+
+function InOut({items,setItems,logs,setLogs,showToast,user}){
+  const [mode,setMode]=useState("inout");
+  const [form,setForm]=useState({itemId:"",type:"입고",qty:"",partner:"",memo:""});
+  const [nItem,setNItem]=useState({name:"",group:"원료",stock:"",unit:"kg",loc:""});
+  const [ft,setFt]=useState("전체");
+  const [fg,setFg]=useState("전체");
+  const [search,setSearch]=useState("");
+  const [fDate,setFDate]=useState("");
+  const [editLog,setEditLog]=useState(null);
+  const [editQty,setEditQty]=useState("");
+  const [delLogId,setDelLogId]=useState(null);
+  const sel=items.find(function(i){return i.id===form.itemId;});
+
+  function startEditLog(l){setEditLog(l.id);setEditQty(String(l.qty));}
+
+  function saveEditLog(l){
+    var nq=parseFloat(editQty);
+    if(isNaN(nq)||nq<=0){showToast("수량을 올바르게 입력하세요",RED);return;}
+    var diff=nq-l.qty;
+    var delta=l.type==="입고"?diff:-diff;
+    var targetItem=items.find(function(it){return it.id===l.itemId;});
+    var newStock=targetItem?Math.round((targetItem.stock+delta)*100)/100:0;
+    setLogs(function(p){return p.map(function(x){return x.id===l.id?Object.assign({},x,{qty:nq}):x;});});
+    setItems(function(p){return p.map(function(it){
+      if(it.id!==l.itemId)return it;
+      return Object.assign({},it,{stock:newStock});
+    });});
+    showToast("[완료] 수량 수정 완료 - "+l.itemName);
+    setEditLog(null);
+    apiPost("updateLog",{id:l.id,data:{"수량":nq}}).catch(function(){});
+    if(targetItem)apiPost("updateItem",{id:l.itemId,data:{"재고량":newStock}}).catch(function(){});
+  }
+
+  function deleteLog(l){
+    var delta=l.type==="입고"?-l.qty:l.qty;
+    var targetItem=items.find(function(it){return it.id===l.itemId;});
+    var newStock=targetItem?Math.round((targetItem.stock+delta)*100)/100:0;
+    setLogs(function(p){return p.filter(function(x){return x.id!==l.id;});});
+    setItems(function(p){return p.map(function(it){
+      if(it.id!==l.itemId)return it;
+      return Object.assign({},it,{stock:newStock});
+    });});
+    showToast("[삭제] 이력 삭제 및 재고 복원 완료",YLW);
+    setDelLogId(null);
+    apiPost("deleteLog",{id:l.id}).catch(function(){});
+    if(targetItem)apiPost("updateItem",{id:l.itemId,data:{"재고량":newStock}}).catch(function(){});
+  }
+
+  function submitInOut(){
+    if(!form.itemId||!form.qty||!form.partner){showToast("필수 항목을 입력하세요",RED);return;}
+    const qty=parseInt(form.qty);
+    if(isNaN(qty)||qty<=0){showToast("수량을 올바르게 입력하세요",RED);return;}
+    if(form.type==="출고"&&sel.stock<qty){showToast("[주의] 재고 부족! 현재고: "+comma(sel.stock)+sel.unit,RED);return;}
+    const log={id:Date.now(),date:today(),time:nowTime(),itemId:form.itemId,itemName:sel.name,
+      group:sel.group,type:form.type,qty,unit:sel.unit,partner:form.partner,memo:form.memo,by:user.name};
+    const newStock=form.type==="입고"?sel.stock+qty:sel.stock-qty;
+    setLogs(function(p){return [log].concat(p);});
+    setItems(function(p){return p.map(function(i){
+      if(i.id!==form.itemId)return i;
+      return Object.assign({},i,{stock:newStock});
+    });});
+    showToast("[완료] "+form.type+" 완료 - "+sel.name+" "+comma(qty)+sel.unit);
+    setForm(function(p){return Object.assign({},p,{itemId:"",qty:"",partner:"",memo:""});});
+    apiPost("addLog",{data:logToRow(log)}).catch(function(){showToast("[주의] 서버 저장 실패 - 새로고침 시 사라질 수 있어요",YLW);});
+    apiPost("updateItem",{id:sel.id,data:{"재고량":newStock}}).catch(function(){});
+  }
+
+  function submitNItem(){
+    if(!nItem.name){showToast("품목명을 입력하세요",RED);return;}
+    const stock=nItem.stock?parseInt(nItem.stock):0;
+    const pre=nItem.group==="원료"?"M":nItem.group==="비에스"?"P":"B";
+    const ex=items.filter(function(i){return i.id.startsWith(pre);});
+    const n=ex.length>0?Math.max.apply(null,ex.map(function(i){return parseInt(i.id.slice(1));}))+1:1;
+    const newId=pre+String(n).padStart(3,"0");
+    const newItem=Object.assign({},nItem,{id:newId,stock:stock});
+    setItems(function(p){return p.concat([newItem]);});
+    showToast("[완료] 품목 추가 - "+nItem.name);
+    setNItem({name:"",group:"원료",stock:"",unit:"kg",loc:""});
+    setMode("inout");
+    apiPost("addItem",{data:itemToRow(newItem)}).catch(function(){showToast("[주의] 서버 저장 실패",YLW);});
+  }
+
+  const filtered=logs.filter(function(l){
+    if(ft!=="전체"&&l.type!==ft)return false;
+    if(fg!=="전체"&&l.group!==fg)return false;
+    if(fDate&&l.date!==fDate)return false;
+    if(search&&!l.itemName.includes(search)&&!l.partner.includes(search))return false;
+    return true;
+  });
+  const availDates=Array.from(new Set(logs.map(function(l){return l.date;}))).sort().reverse();
+
+  return(
+    <div>
+      <div style={{marginBottom:16,paddingBottom:14,borderBottom:"1px solid "+BRD2}}>
+        <div style={{display:"flex",alignItems:"center",gap:10,marginBottom:12}}>
+          <div style={{minWidth:40,height:40,padding:"0 8px",borderRadius:10,flexShrink:0,
+            background:"rgba(16,185,129,0.15)",border:"1px solid rgba(16,185,129,0.3)",
+            display:"flex",alignItems:"center",justifyContent:"center",fontSize:13,fontWeight:800,whiteSpace:"nowrap"}}>[입출]</div>
+          <div style={{flex:1}}>
+            <div style={{fontSize:20,fontWeight:900,color:WHT}}>입출고 관리</div>
+            <div style={{fontSize:13,color:MUT}}>{user.name} 담당</div>
+          </div>
+          <div style={{display:"flex",gap:7,flexShrink:0}}>
+            {[{k:"inout",icon:"[입출]",label:"입출고",col:ACC},{k:"today",icon:"[오늘]",label:"오늘출고",col:YLW},{k:"additem",icon:"[추가]",label:"품목추가",col:GRN}].map(function(b){
+              const on=mode===b.k;
+              return(
+                <button key={b.k} onClick={function(){setMode(b.k);}}
+                  style={{display:"flex",flexDirection:"column",alignItems:"center",gap:3,
+                    padding:"8px 12px",borderRadius:10,cursor:"pointer",
+                    border:"2px solid "+(on?b.col:BRD),
+                    background:on?b.col+"18":"transparent",
+                    color:on?b.col:MUT,fontSize:13,fontWeight:on?800:600,minWidth:56}}>
+                  <span style={{fontSize:17}}>{b.icon}</span>
+                  <span>{b.label}</span>
+                </button>
+              );
+            })}
+          </div>
+        </div>
+      </div>
+
+      {mode==="inout"&&(
+        <Card style={{padding:18,marginBottom:16}}>
+          <div style={{fontWeight:700,fontSize:15,color:WHT,marginBottom:13}}>[문서] 입출고 등록</div>
+          <div style={{marginBottom:12}}>
+            <div style={{fontSize:13,color:MUT,marginBottom:7,fontWeight:700}}>품목 선택 *</div>
+            <select value={form.itemId} onChange={function(e){setForm(function(p){return Object.assign({},p,{itemId:e.target.value});});}}
+              style={{width:"100%",background:SURF,border:"1px solid "+BRD,borderRadius:10,
+                color:form.itemId?TXTH:MUT,padding:"12px 13px",fontSize:14}}>
+              <option value="">-- 품목 선택 --</option>
+              {GROUPS.map(function(g){
+                return(
+                  <optgroup key={g} label={GICO[g]+" "+g}>
+                    {items.filter(function(i){return i.group===g;}).map(function(i){
+                      return <option key={i.id} value={i.id}>{i.name} | 재고: {comma(i.stock)}{i.unit}</option>;
+                    })}
+                  </optgroup>
+                );
+              })}
+            </select>
+          </div>
+          {sel&&(
+            <div style={{background:SURF,border:"1px solid "+BRD,borderRadius:9,
+              padding:"9px 13px",marginBottom:12,display:"flex",gap:12,fontSize:13,flexWrap:"wrap"}}>
+              <span style={{color:GCOL[sel.group],fontWeight:700}}>{GICO[sel.group]} {sel.group}</span>
+              <span style={{color:MUT}}>{""+sel.loc}</span>
+              <span style={{color:MUT}}>현재고: <span style={{color:ACCL,fontWeight:800,fontSize:15}}>{comma(sel.stock)}{sel.unit}</span></span>
+            </div>
+          )}
+          <div style={{display:"flex",gap:10,marginBottom:12}}>
+            {["입고","출고"].map(function(t){
+              const on=form.type===t;
+              const col=t==="입고"?GRN:RED;
+              return(
+                <button key={t} onClick={function(){setForm(function(p){return Object.assign({},p,{type:t});});}}
+                  style={{flex:1,padding:"12px",borderRadius:10,cursor:"pointer",fontWeight:800,fontSize:16,
+                    border:"2px solid "+(on?col:BRD),
+                    background:on?(t==="입고"?"rgba(16,185,129,0.12)":"rgba(244,63,94,0.12)"):"transparent",
+                    color:on?col:MUT,transition:"all 0.15s"}}>
+                  {t==="입고"?"[입고] 입고":"[출고] 출고"}
+                </button>
+              );
+            })}
+          </div>
+          {[{l:"수량",k:"qty",ph:"수량 입력",tp:"number"},{l:"거래처",k:"partner",ph:"거래처명"},{l:"메모",k:"memo",ph:"비고(선택)"}].map(function(f){
+            return(
+              <div key={f.k} style={{marginBottom:12}}>
+                <div style={{fontSize:13,color:MUT,marginBottom:7,fontWeight:700}}>{f.l}</div>
+                <input type={f.tp||"text"} placeholder={f.ph} value={form[f.k]}
+                  onChange={function(e){setForm(function(p){var obj=Object.assign({},p);obj[f.k]=e.target.value;return obj;});}}
+                  style={{width:"100%",background:SURF,border:"1px solid "+BRD,borderRadius:10,
+                    color:TXTH,padding:"12px 13px",fontSize:f.k==="qty"?18:14}}/>
+              </div>
+            );
+          })}
+          <div style={{fontSize:13,color:MUT,marginBottom:12}}>담당자: <span style={{color:ACCL,fontWeight:700}}>{user.name}</span></div>
+          <button onClick={submitInOut} style={{width:"100%",padding:"14px",borderRadius:12,border:"none",
+            cursor:"pointer",background:"linear-gradient(135deg,#1D6FE8,#38BDF8)",color:"#fff",fontWeight:800,fontSize:16}}>
+            등록하기
+          </button>
+        </Card>
+      )}
+
+      {mode==="today"&&(function(){
+        var todayOut=logs.filter(function(l){return l.date===today()&&l.type==="출고";});
+        var tTotal=todayOut.reduce(function(s,l){return s+l.qty;},0);
+        return(
+          <div>
+            <Card style={{padding:"14px 16px",marginBottom:14,border:"1px solid "+YLW+"35"}}>
+              <div style={{display:"flex",justifyContent:"space-between",alignItems:"center"}}>
+                <div>
+                  <div style={{fontSize:13,color:MUT}}>오늘({today()}) 출고 현황</div>
+                  <div style={{fontSize:14,color:WHT,fontWeight:700,marginTop:2}}>{todayOut.length+"건"}</div>
+                </div>
+                <div style={{fontSize:22,fontWeight:900,color:YLW}}>{comma(tTotal)}<span style={{fontSize:13,color:MUT,fontWeight:400}}>kg</span></div>
+              </div>
+            </Card>
+
+            {todayOut.length===0?(
+              <Card style={{padding:"30px",textAlign:"center",color:MUT,fontSize:15}}>오늘 출고 이력이 없습니다</Card>
+            ):(
+              <Card style={{overflow:"hidden"}}>
+                {todayOut.map(function(l,li){
+                  var isEdit=editLog===l.id;
+                  var isDel=delLogId===l.id;
+                  return(
+                    <div key={l.id} style={{padding:"11px 13px",
+                      borderBottom:li===todayOut.length-1?"none":"1px solid "+BRD2}}>
+                      <div style={{display:"flex",alignItems:"center",gap:8}}>
+                        <span style={{background:"rgba(244,63,94,0.12)",color:RED,borderRadius:6,
+                          padding:"2px 8px",fontSize:11,fontWeight:800,flexShrink:0}}>출고</span>
+                        <div style={{flex:1,minWidth:0,overflow:"hidden"}}>
+                          <div style={{fontWeight:700,fontSize:14,color:TXTH,overflow:"hidden",textOverflow:"ellipsis",whiteSpace:"nowrap"}}>{l.itemName}</div>
+                          <div style={{fontSize:11,color:MUT,overflow:"hidden",textOverflow:"ellipsis",whiteSpace:"nowrap"}}>{l.partner+" - "+l.time}</div>
+                        </div>
+                        {isEdit?(
+                          <div style={{display:"flex",gap:5,alignItems:"center",flexShrink:0}}>
+                            <input type="number" value={editQty} onChange={function(e){setEditQty(e.target.value);}} autoFocus
+                              style={{width:78,background:SURF,border:"2px solid "+ACC,borderRadius:7,
+                                color:TXTH,padding:"6px 8px",fontSize:14,textAlign:"right"}}/>
+                            <span style={{fontSize:12,color:MUT}}>{l.unit}</span>
+                          </div>
+                        ):(
+                          <div style={{fontWeight:900,fontSize:16,color:WHT,flexShrink:0}}>{comma(l.qty)}<span style={{fontSize:11,color:MUT,fontWeight:400}}>{l.unit}</span></div>
+                        )}
+                      </div>
+                      <div style={{display:"flex",gap:6,marginTop:8,justifyContent:"flex-end"}}>
+                        {isEdit?(
+                          <div>
+                            <button onClick={function(){saveEditLog(l);}}
+                              style={{background:ACC,border:"none",borderRadius:7,color:"#fff",
+                                padding:"6px 12px",cursor:"pointer",fontSize:12,fontWeight:700,marginRight:6}}>저장</button>
+                            <button onClick={function(){setEditLog(null);}}
+                              style={{background:"transparent",border:"1px solid "+BRD,borderRadius:7,color:MUT,
+                                padding:"6px 10px",cursor:"pointer",fontSize:12}}>취소</button>
+                          </div>
+                        ):isDel?(
+                          <div>
+                            <span style={{fontSize:12,color:RED,marginRight:8}}>삭제하시겠습니까?</span>
+                            <button onClick={function(){deleteLog(l);}}
+                              style={{background:"rgba(244,63,94,0.15)",border:"1px solid rgba(244,63,94,0.4)",
+                                borderRadius:7,color:RED,padding:"6px 12px",cursor:"pointer",fontSize:12,fontWeight:700,marginRight:6}}>확인</button>
+                            <button onClick={function(){setDelLogId(null);}}
+                              style={{background:"transparent",border:"1px solid "+BRD,borderRadius:7,color:MUT,
+                                padding:"6px 10px",cursor:"pointer",fontSize:12}}>취소</button>
+                          </div>
+                        ):(
+                          <div>
+                            <button onClick={function(){startEditLog(l);}}
+                              style={{background:"transparent",border:"1px solid "+BRD,borderRadius:7,color:MUT,
+                                padding:"6px 12px",cursor:"pointer",fontSize:12,marginRight:6}}>수정</button>
+                            <button onClick={function(){setDelLogId(l.id);}}
+                              style={{background:"transparent",border:"1px solid rgba(244,63,94,0.35)",borderRadius:7,color:RED,
+                                padding:"6px 12px",cursor:"pointer",fontSize:12}}>삭제</button>
+                          </div>
+                        )}
+                      </div>
+                    </div>
+                  );
+                })}
+              </Card>
+            )}
+          </div>
+        );
+      })()}
+
+      {mode==="additem"&&(
+        <Card style={{padding:18,marginBottom:16,border:"1px solid rgba(16,185,129,0.3)"}}>
+          <div style={{fontWeight:700,fontSize:15,color:GRN,marginBottom:13}}>[추가] 새 품목 추가</div>
+          <div style={{display:"flex",gap:8,marginBottom:13}}>
+            {GROUPS.map(function(g){
+              const on=nItem.group===g;
+              return(
+                <button key={g} onClick={function(){setNItem(function(p){return Object.assign({},p,{group:g});});}}
+                  style={{flex:1,padding:"10px 4px",borderRadius:9,cursor:"pointer",fontWeight:700,fontSize:12,
+                    border:"2px solid "+(on?GCOL[g]:BRD),background:on?GCOL[g]+"15":"transparent",
+                    color:on?GCOL[g]:MUT,lineHeight:1.4}}>
+                  {GICO[g]}<br/>{g}
+                </button>
+              );
+            })}
+          </div>
+          <div style={{marginBottom:12}}>
+            <div style={{fontSize:13,color:MUT,marginBottom:7,fontWeight:700}}>품목명 *</div>
+            <input type="text" placeholder="품목명 입력" value={nItem.name}
+              onChange={function(e){setNItem(function(p){return Object.assign({},p,{name:e.target.value});});}}
+              style={{width:"100%",background:SURF,border:"1px solid "+BRD,borderRadius:10,color:TXTH,padding:"12px 13px",fontSize:14}}/>
+          </div>
+          <div style={{display:"grid",gridTemplateColumns:"2fr 1fr",gap:10,marginBottom:12}}>
+            <div>
+              <div style={{fontSize:13,color:MUT,marginBottom:7,fontWeight:700}}>초기 재고 (선택)</div>
+              <input type="number" placeholder="수량" value={nItem.stock}
+                onChange={function(e){setNItem(function(p){return Object.assign({},p,{stock:e.target.value});});}}
+                style={{width:"100%",background:SURF,border:"1px solid "+BRD,borderRadius:10,color:TXTH,padding:"12px 13px",fontSize:14}}/>
+            </div>
+            <div>
+              <div style={{fontSize:13,color:MUT,marginBottom:7,fontWeight:700}}>단위</div>
+              <select value={nItem.unit} onChange={function(e){setNItem(function(p){return Object.assign({},p,{unit:e.target.value});});}}
+                style={{width:"100%",background:SURF,border:"1px solid "+BRD,borderRadius:10,color:TXTH,padding:"12px 10px",fontSize:14}}>
+                <option value="kg">kg</option>
+                <option value="개">개</option>
+                <option value="L">L</option>
+              </select>
+            </div>
+          </div>
+          <div style={{marginBottom:16}}>
+            <div style={{fontSize:13,color:MUT,marginBottom:7,fontWeight:700}}>위치 (선택)</div>
+            <input type="text" placeholder="A-01" value={nItem.loc}
+              onChange={function(e){setNItem(function(p){return Object.assign({},p,{loc:e.target.value});});}}
+              style={{width:"100%",background:SURF,border:"1px solid "+BRD,borderRadius:10,color:TXTH,padding:"12px 13px",fontSize:14}}/>
+          </div>
+          <div style={{display:"flex",gap:10}}>
+            <button onClick={function(){setMode("inout");}}
+              style={{flex:1,padding:"13px",borderRadius:12,border:"1px solid "+BRD,cursor:"pointer",background:"transparent",color:MUT,fontWeight:700,fontSize:15}}>취소</button>
+            <button onClick={submitNItem}
+              style={{flex:2,padding:"13px",borderRadius:12,border:"none",cursor:"pointer",
+                background:"linear-gradient(135deg,"+GRN+",#059669)",color:"#fff",fontWeight:800,fontSize:15}}>[추가] 품목 추가</button>
+          </div>
+        </Card>
+      )}
+
+      <GroupTabs active={fg} onChange={setFg}/>
+      <div style={{display:"flex",gap:8,marginBottom:12,alignItems:"center",flexWrap:"wrap"}}>
+        {["전체","입고","출고"].map(function(f){
+          const on=ft===f;
+          return(
+            <button key={f} onClick={function(){setFt(f);}}
+              style={{background:on?"rgba(29,111,232,0.15)":"transparent",border:"1px solid "+(on?ACC:BRD),
+                color:on?ACCL:MUT,borderRadius:8,padding:"7px 14px",cursor:"pointer",fontSize:14,fontWeight:on?700:400}}>{f}</button>
+          );
+        })}
+        <input value={search} onChange={function(e){setSearch(e.target.value);}} placeholder="품목·거래처 검색"
+          style={{marginLeft:"auto",background:SURF,border:"1px solid "+BRD,borderRadius:8,color:TXT,padding:"7px 12px",fontSize:14,width:160}}/>
+      </div>
+
+      {/* 날짜 검색 */}
+      <div style={{display:"flex",gap:8,marginBottom:14,alignItems:"center",flexWrap:"wrap"}}>
+        <input type="date" value={fDate} onChange={function(e){setFDate(e.target.value);}}
+          style={{background:SURF,border:"1px solid "+(fDate?ACC:BRD),borderRadius:8,
+            color:fDate?ACCL:TXT,padding:"7px 12px",fontSize:14}}/>
+        {fDate&&<button onClick={function(){setFDate("");}}
+          style={{background:"transparent",border:"1px solid "+BRD,borderRadius:8,color:MUT,
+            padding:"7px 12px",cursor:"pointer",fontSize:13}}>날짜 초기화</button>}
+        <div style={{display:"flex",gap:6,overflowX:"auto",flex:1,minWidth:0}}>
+          {availDates.slice(0,10).map(function(d){
+            var dd=new Date(d);
+            var label=(dd.getMonth()+1)+"/"+dd.getDate();
+            var on=fDate===d;
+            return(
+              <button key={d} onClick={function(){setFDate(on?"":d);}}
+                style={{flexShrink:0,background:on?"rgba(29,111,232,0.15)":"transparent",
+                  border:"1px solid "+(on?ACC:BRD),borderRadius:8,color:on?ACCL:MUT,
+                  padding:"6px 11px",cursor:"pointer",fontSize:13,fontWeight:on?700:400,whiteSpace:"nowrap"}}>
+                {label}
+              </button>
+            );
+          })}
+        </div>
+      </div>
+
+      {filtered.length===0?(
+        <Card style={{padding:"30px",textAlign:"center",color:MUT,fontSize:15}}>
+          {fDate?("해당 날짜("+fDate+")에 이력이 없습니다"):"이력이 없습니다"}
+        </Card>
+      ):(
+        (function(){
+          var byDate={};
+          var order=[];
+          filtered.forEach(function(l){
+            if(!byDate[l.date]){byDate[l.date]=[];order.push(l.date);}
+            byDate[l.date].push(l);
+          });
+          return order.map(function(date){
+            var dayLogs=byDate[date];
+            var dIn=dayLogs.filter(function(l){return l.type==="입고";}).reduce(function(s,l){return s+l.qty;},0);
+            var dOut=dayLogs.filter(function(l){return l.type==="출고";}).reduce(function(s,l){return s+l.qty;},0);
+            var d=new Date(date);
+            var wday=["일","월","화","수","목","금","토"][d.getDay()];
+            var dLabel=(d.getMonth()+1)+"월"+d.getDate()+"일 ("+wday+")";
+            return(
+              <div key={date} style={{marginBottom:14}}>
+                <Card style={{overflow:"hidden"}}>
+                <div style={{display:"flex",alignItems:"center",gap:10,
+                  padding:"10px 13px",background:CARD,borderBottom:"1px solid "+BRD}}>
+                  <span style={{fontWeight:800,fontSize:14,color:WHT}}>{dLabel}</span>
+                  <span style={{fontSize:12,color:MUT}}>{dayLogs.length}건</span>
+                  <span style={{marginLeft:"auto",display:"flex",gap:12,fontSize:13}}>
+                    <span style={{color:GRN,fontWeight:700}}>{"↓ "+comma(dIn)+"kg"}</span>
+                    <span style={{color:RED,fontWeight:700}}>{"↑ "+comma(dOut)+"kg"}</span>
+                  </span>
+                </div>
+                <div style={{display:"grid",gap:0}}>
+                  {(function(){
+                    var inN=0, outN=0;
+                    return dayLogs.map(function(l,li){
+                      var no = l.type==="입고" ? ++inN : ++outN;
+                      var isLast = li===dayLogs.length-1;
+                      return(
+                        <div key={l.id} style={{display:"flex",alignItems:"center",gap:8,
+                          padding:"9px 13px",borderBottom:isLast?"none":"1px solid "+BRD2}}>
+                          <span style={{fontSize:13,fontWeight:800,color:l.type==="입고"?GRN:RED,
+                            minWidth:18,flexShrink:0}}>{no+"."}</span>
+                          <span style={{background:l.type==="입고"?"rgba(16,185,129,0.12)":"rgba(244,63,94,0.12)",
+                            color:l.type==="입고"?GRN:RED,borderRadius:6,padding:"2px 8px",fontSize:11,fontWeight:800,flexShrink:0,whiteSpace:"nowrap"}}>{l.type}</span>
+                          <span style={{flex:1,minWidth:0,overflow:"hidden",textOverflow:"ellipsis",whiteSpace:"nowrap",
+                            fontSize:14,color:TXTH}}>
+                            <span style={{fontWeight:700}}>{l.itemName}</span>
+                            <span style={{color:MUT}}> {comma(l.qty)}{l.unit} ({l.partner})</span>
+                          </span>
+                          <span style={{fontSize:11,color:MUT,flexShrink:0,whiteSpace:"nowrap"}}>{l.time}</span>
+                        </div>
+                      );
+                    });
+                  })()}
+                </div>
+                </Card>
+              </div>
+            );
+          });
+        })()
+      )}
+    </div>
+  );
+}
+
+function Inventory({items,setItems,showToast,isAdmin,logs}){
+  const [ag,setAg]=useState("전체");
+  const [search,setSearch]=useState("");
+  const [editId,setEditId]=useState(null);
+  const [editVal,setEditVal]=useState("");
+  const [detail,setDetail]=useState(null);
+  function saveEdit(id){
+    const v=parseInt(editVal);
+    if(isNaN(v)||v<0){showToast("올바른 수량 입력",RED);return;}
+    setItems(function(p){return p.map(function(i){return i.id===id?Object.assign({},i,{stock:v}):i;});});
+    showToast("[완료] 재고 수량 수정 완료");setEditId(null);
+    apiPost("updateItem",{id:id,data:{"재고량":v}}).catch(function(){showToast("[주의] 서버 저장 실패",YLW);});
+  }
+  const list=items.filter(function(i){return (ag==="전체"||i.group===ag)&&(!search||i.name.includes(search)||i.id.includes(search));});
+  return(
+    <div>
+      <SectionTitle icon="[목록]" title="재고 현황" sub={(list.length)+"종 표시"}
+        right={!isAdmin?<span style={{fontSize:13,color:YLW,background:"rgba(245,158,11,0.1)",border:"1px solid rgba(245,158,11,0.3)",borderRadius:8,padding:"4px 11px",fontWeight:600}}>[눈] 조회전용</span>:null}/>
+      <GroupTabs active={ag} onChange={setAg}/>
+      <div style={{display:"flex",justifyContent:"flex-end",marginBottom:13}}>
+        <input value={search} onChange={function(e){setSearch(e.target.value);}} placeholder="품목 검색"
+          style={{background:SURF,border:"1px solid "+BRD,borderRadius:8,color:TXT,padding:"9px 13px",fontSize:14,width:"100%",maxWidth:260}}/>
+      </div>
+      {(ag==="전체"?GROUPS:[ag]).map(function(g){
+        const gi=list.filter(function(i){return i.group===g;});
+        if(!gi.length)return null;
+        return(
+          <div key={g} style={{marginBottom:22}}>
+            <div style={{display:"flex",alignItems:"center",gap:12,marginBottom:11,
+              padding:"10px 15px",background:GCOL[g]+"0A",border:"1px solid "+GCOL[g]+"30",borderRadius:12}}>
+              <div style={{minWidth:34,height:34,padding:"0 8px",borderRadius:9,background:GGRAD[g],
+                display:"flex",alignItems:"center",justifyContent:"center",fontSize:11,fontWeight:800,whiteSpace:"nowrap",flexShrink:0}}>{GICO[g]}</div>
+              <div style={{flex:1}}>
+                <span style={{fontWeight:800,fontSize:15,color:GCOL[g]}}>{g}</span>
+                <span style={{fontSize:12,color:MUT,marginLeft:7}}>{GDSC[g]}</span>
+              </div>
+              <span style={{fontSize:13,color:MUT,flexShrink:0}}>{gi.length}종 - <span style={{color:GCOL[g],fontWeight:700}}>{comma(gi.reduce(function(s,i){return s+i.stock;},0))}kg</span></span>
+            </div>
+            <div style={{display:"grid",gap:9}}>
+              {gi.map(function(item){
+                const isEmpty=item.stock===0;
+                return(
+                  <Card key={item.id}
+                    onClick={function(){if(editId!==item.id)setDetail(item);}}
+                    style={{padding:"14px 15px",borderColor:isEmpty?"rgba(244,63,94,0.3)":BRD,
+                      cursor:"pointer",transition:"all 0.15s"}}
+                    onMouseOver={function(e){e.currentTarget.style.transform="translateY(-2px)";}}
+                    onMouseOut={function(e){e.currentTarget.style.transform="translateY(0)";}}
+                  >
+                    <div style={{display:"flex",justifyContent:"space-between",alignItems:"flex-start",marginBottom:9}}>
+                      <div>
+                        <div style={{fontWeight:800,fontSize:15,color:TXTH,marginBottom:4}}>{item.name}</div>
+                        <div style={{display:"flex",gap:8}}>
+                          <span style={{fontSize:11,color:MUT,background:SURF,borderRadius:4,padding:"1px 6px"}}>{item.id}</span>
+                          <span style={{fontSize:11,color:MUT}}>{""+item.loc}</span>
+                        </div>
+                      </div>
+                      <span style={{background:isEmpty?"rgba(244,63,94,0.12)":"rgba(16,185,129,0.1)",
+                        color:isEmpty?RED:GRN,borderRadius:8,padding:"4px 11px",fontSize:13,fontWeight:800,flexShrink:0}}>
+                        {isEmpty?"재고없음":"정상"}
+                      </span>
+                    </div>
+                    <div style={{display:"flex",alignItems:"center",gap:12}}>
+                      <div style={{flex:1,background:BRD2,borderRadius:99,height:6}}>
+                        <div style={{width:Math.min(100,item.stock>0?Math.log10(item.stock+1)/5*100:0)+"%",
+                          height:"100%",borderRadius:99,background:isEmpty?RED:GGRAD[g],transition:"width 0.5s"}}/>
+                      </div>
+                      {isAdmin&&editId===item.id?(
+                        <div onClick={function(e){e.stopPropagation();}} style={{display:"flex",gap:7,alignItems:"center",flexShrink:0}}>
+                          <input type="number" value={editVal} onChange={function(e){setEditVal(e.target.value);}} autoFocus
+                            style={{width:95,background:SURF,border:"2px solid "+ACC,borderRadius:8,
+                              color:TXTH,padding:"7px 9px",fontSize:16,textAlign:"right"}}/>
+                          <span style={{fontSize:13,color:MUT}}>{item.unit}</span>
+                          <button onClick={function(){saveEdit(item.id);}}
+                            style={{background:ACC,border:"none",borderRadius:8,color:"#fff",padding:"7px 12px",cursor:"pointer",fontSize:13,fontWeight:700}}>저장</button>
+                          <button onClick={function(){setEditId(null);}}
+                            style={{background:"transparent",border:"1px solid "+BRD,borderRadius:8,color:MUT,padding:"7px 10px",cursor:"pointer",fontSize:13}}>취소</button>
+                        </div>
+                      ):(
+                        <div style={{display:"flex",alignItems:"center",gap:9,flexShrink:0}}>
+                          <span style={{fontWeight:900,fontSize:21,color:isEmpty?RED:WHT,letterSpacing:"-0.5px"}}>
+                            {comma(item.stock)}<span style={{fontSize:13,color:MUT,fontWeight:400,marginLeft:2}}>{item.unit}</span>
+                          </span>
+                          {isAdmin&&<button onClick={function(e){e.stopPropagation();setEditId(item.id);setEditVal(String(item.stock));}}
+                            style={{background:"transparent",border:"1px solid "+BRD,borderRadius:8,color:MUT,padding:"5px 11px",cursor:"pointer",fontSize:12}}>수정</button>}
+                        </div>
+                      )}
+                    </div>
+                  </Card>
+                );
+              })}
+            </div>
+          </div>
+        );
+      })}
+
+      {detail&&(function(){
+        var itemLogs=logs.filter(function(l){return l.itemId===detail.id;})
+          .sort(function(a,b){return b.date.localeCompare(a.date)||b.time.localeCompare(a.time);});
+        var tIn=itemLogs.filter(function(l){return l.type==="입고";}).reduce(function(s,l){return s+l.qty;},0);
+        var tOut=itemLogs.filter(function(l){return l.type==="출고";}).reduce(function(s,l){return s+l.qty;},0);
+        return(
+          <div onClick={function(){setDetail(null);}} style={{
+            position:"fixed",inset:0,background:"rgba(0,0,0,0.75)",zIndex:500,
+            display:"flex",alignItems:"flex-end",backdropFilter:"blur(4px)"}}>
+            <div onClick={function(e){e.stopPropagation();}} style={{
+              background:CARD,borderRadius:"22px 22px 0 0",border:"1px solid "+BRD,
+              width:"100%",maxWidth:640,margin:"0 auto",maxHeight:"82vh",overflowY:"auto",paddingBottom:32}}>
+              <div style={{display:"flex",justifyContent:"center",paddingTop:12,marginBottom:4}}>
+                <div style={{width:36,height:4,background:BRD,borderRadius:99}}/>
+              </div>
+              <div style={{position:"sticky",top:0,background:CARD,padding:"12px 20px 14px",
+                borderBottom:"1px solid "+BRD2,display:"flex",alignItems:"center",justifyContent:"space-between",zIndex:1}}>
+                <div>
+                  <div style={{fontWeight:800,fontSize:17,color:WHT}}>{detail.name}</div>
+                  <div style={{fontSize:12,color:MUT,marginTop:2}}>{detail.id+" - "+detail.loc}</div>
+                </div>
+                <button onClick={function(){setDetail(null);}} style={{background:SURF,
+                  border:"1px solid "+BRD,borderRadius:10,color:MUT,padding:"6px 14px",
+                  cursor:"pointer",fontSize:14,fontWeight:700}}>닫기</button>
+              </div>
+              <div style={{padding:"14px 16px"}}>
+                <div style={{display:"grid",gridTemplateColumns:"1fr 1fr 1fr",gap:8,marginBottom:16}}>
+                  <Card style={{padding:"12px",textAlign:"center"}}>
+                    <div style={{fontSize:11,color:MUT,marginBottom:4}}>현재고</div>
+                    <div style={{fontSize:17,fontWeight:900,color:detail.stock===0?RED:WHT}}>{comma(detail.stock)}<span style={{fontSize:11,color:MUT,fontWeight:400}}>{detail.unit}</span></div>
+                  </Card>
+                  <Card style={{padding:"12px",textAlign:"center"}}>
+                    <div style={{fontSize:11,color:MUT,marginBottom:4}}>총 입고</div>
+                    <div style={{fontSize:17,fontWeight:900,color:GRN}}>{comma(tIn)}<span style={{fontSize:11,color:MUT,fontWeight:400}}>{detail.unit}</span></div>
+                  </Card>
+                  <Card style={{padding:"12px",textAlign:"center"}}>
+                    <div style={{fontSize:11,color:MUT,marginBottom:4}}>총 출고</div>
+                    <div style={{fontSize:17,fontWeight:900,color:RED}}>{comma(tOut)}<span style={{fontSize:11,color:MUT,fontWeight:400}}>{detail.unit}</span></div>
+                  </Card>
+                </div>
+                <div style={{fontWeight:700,fontSize:14,color:MUT,marginBottom:10}}>{"입출고 이력 ("+itemLogs.length+"건)"}</div>
+                {itemLogs.length===0?(
+                  <div style={{textAlign:"center",padding:"30px",color:MUT,fontSize:14}}>입출고 이력이 없습니다</div>
+                ):(
+                  <Card style={{overflow:"hidden"}}>
+                    {itemLogs.map(function(l,li){
+                      return(
+                        <div key={l.id} style={{display:"flex",alignItems:"center",gap:8,
+                          padding:"10px 13px",borderBottom:li===itemLogs.length-1?"none":"1px solid "+BRD2}}>
+                          <span style={{background:l.type==="입고"?"rgba(16,185,129,0.12)":"rgba(244,63,94,0.12)",
+                            color:l.type==="입고"?GRN:RED,borderRadius:6,padding:"2px 9px",fontSize:12,fontWeight:800,flexShrink:0}}>{l.type}</span>
+                          <span style={{flex:1,fontSize:13,color:TXT,overflow:"hidden",textOverflow:"ellipsis",whiteSpace:"nowrap"}}>{l.partner}</span>
+                          <span style={{fontWeight:800,fontSize:15,color:l.type==="입고"?GRN:RED,flexShrink:0}}>
+                            {(l.type==="입고"?"+":"-")+comma(l.qty)}{l.unit}
+                          </span>
+                          <span style={{fontSize:11,color:MUT,flexShrink:0,minWidth:78,textAlign:"right"}}>{l.date.slice(5)+" "+l.time}</span>
+                        </div>
+                      );
+                    })}
+                  </Card>
+                )}
+              </div>
+            </div>
+          </div>
+        );
+      })()}
+    </div>
+  );
+}
+
+function MonthlyChart({logs}){
+  const [vg,setVg]=useState("전체");
+  const months=["1월","2월","3월","4월","5월","6월"];
+  const mData=useMemo(function(){
+    return months.map(function(_,mi){
+      const ml=logs.filter(function(l){
+        const d=new Date(l.date);
+        return d.getFullYear()===2026&&d.getMonth()===mi&&(vg==="전체"||l.group===vg);
+      });
+      return{label:months[mi],
+        in:ml.filter(function(l){return l.type==="입고";}).reduce(function(s,l){return s+l.qty;},0),
+        out:ml.filter(function(l){return l.type==="출고";}).reduce(function(s,l){return s+l.qty;},0)};
+    });
+  },[logs,vg]);
+  const maxV=Math.max.apply(null,mData.map(function(d){return Math.max(d.in,d.out);}));
+  const mv=maxV||1;
+  const tIn=mData.reduce(function(s,d){return s+d.in;},0);
+  const tOut=mData.reduce(function(s,d){return s+d.out;},0);
+  const gM=GROUPS.map(function(g){return{g:g,col:GCOL[g],grad:GGRAD[g],data:months.map(function(_,mi){
+    const ml=logs.filter(function(l){const d=new Date(l.date);return d.getFullYear()===2026&&d.getMonth()===mi&&l.group===g;});
+    return{in:ml.filter(function(l){return l.type==="입고";}).reduce(function(s,l){return s+l.qty;},0),
+           out:ml.filter(function(l){return l.type==="출고";}).reduce(function(s,l){return s+l.qty;},0)};
+  })};});
+  return(
+    <div>
+      <SectionTitle icon="[차트]" title="월별 입출고 분석" sub="2026년 1~6월"/>
+      <GroupTabs active={vg} onChange={setVg}/>
+      <div style={{display:"grid",gridTemplateColumns:"1fr 1fr",gap:10,marginBottom:16}}>
+        {[{label:"6개월 총 입고",val:comma(tIn)+"kg",color:GRN,icon:"[입고]"},{label:"6개월 총 출고",val:comma(tOut)+"kg",color:RED,icon:"[출고]"}].map(function(k){
+          return(
+            <Card key={k.label} style={{padding:"16px"}}>
+              <div style={{fontSize:22,marginBottom:5}}>{k.icon}</div>
+              <div style={{fontSize:20,fontWeight:900,color:k.color}}>{k.val}</div>
+              <div style={{fontSize:13,color:MUT,marginTop:4}}>{k.label}</div>
+            </Card>
+          );
+        })}
+      </div>
+      <Card style={{padding:"16px",marginBottom:14}}>
+        <div style={{fontWeight:700,fontSize:15,color:WHT,marginBottom:14}}>[통계] 월별 입출고량</div>
+        <div style={{display:"flex",flexDirection:"column",gap:6}}>
+          <div style={{display:"grid",gridTemplateColumns:"34px 1fr 1fr",gap:6,marginBottom:4}}>
+            <div/>
+            <div style={{fontSize:12,color:GRN,fontWeight:700,display:"flex",alignItems:"center",gap:4}}>
+              <span style={{width:10,height:10,background:GRN,borderRadius:2,display:"inline-block"}}/>입고
+            </div>
+            <div style={{fontSize:12,color:RED,fontWeight:700,display:"flex",alignItems:"center",gap:4}}>
+              <span style={{width:10,height:10,background:RED,borderRadius:2,display:"inline-block"}}/>출고
+            </div>
+          </div>
+          {mData.map(function(d,i){
+            const inP=Math.round(d.in/mv*100);
+            const outP=Math.round(d.out/mv*100);
+            return(
+              <div key={i} style={{display:"grid",gridTemplateColumns:"34px 1fr 1fr",gap:6,alignItems:"center"}}>
+                <div style={{fontSize:13,fontWeight:700,color:MUT,textAlign:"center"}}>{d.label}</div>
+                <div style={{display:"flex",alignItems:"center",gap:5}}>
+                  <div style={{flex:1,background:BRD2,borderRadius:99,height:18,overflow:"hidden"}}>
+                    <div style={{width:inP+"%",height:"100%",background:"linear-gradient(90deg,"+GRN+","+GRN+"88)",borderRadius:99,minWidth:d.in?3:0}}/>
+                  </div>
+                  <span style={{fontSize:12,fontWeight:700,color:d.in>0?GRN:MUT,minWidth:44,textAlign:"right",flexShrink:0}}>{d.in>0?comma(d.in):"-"}</span>
+                </div>
+                <div style={{display:"flex",alignItems:"center",gap:5}}>
+                  <div style={{flex:1,background:BRD2,borderRadius:99,height:18,overflow:"hidden"}}>
+                    <div style={{width:outP+"%",height:"100%",background:"linear-gradient(90deg,"+RED+","+RED+"88)",borderRadius:99,minWidth:d.out?3:0}}/>
+                  </div>
+                  <span style={{fontSize:12,fontWeight:700,color:d.out>0?RED:MUT,minWidth:44,textAlign:"right",flexShrink:0}}>{d.out>0?comma(d.out):"-"}</span>
+                </div>
+              </div>
+            );
+          })}
+        </div>
+      </Card>
+      <div style={{display:"grid",gap:12}}>
+        {gM.map(function(g){
+          const tI=g.data.reduce(function(s,d){return s+d.in;},0);
+          const tO=g.data.reduce(function(s,d){return s+d.out;},0);
+          const gMax=Math.max.apply(null,g.data.map(function(d){return Math.max(d.in,d.out);}));
+          const gm=gMax||1;
+          return(
+            <Card key={g.g} style={{overflow:"hidden"}}>
+              <div style={{padding:"11px 15px",borderBottom:"1px solid "+BRD2,
+                background:g.col+"0A",display:"flex",alignItems:"center",justifyContent:"space-between"}}>
+                <div style={{display:"flex",alignItems:"center",gap:8}}>
+                  <span style={{fontSize:19}}>{GICO[g.g]}</span>
+                  <span style={{fontWeight:800,fontSize:16,color:g.col}}>{g.g}</span>
+                </div>
+                <div style={{display:"flex",gap:12,fontSize:13}}>
+                  <span style={{color:GRN,fontWeight:700}}>↓ {comma(tI)}kg</span>
+                  <span style={{color:RED,fontWeight:700}}>↑ {comma(tO)}kg</span>
+                </div>
+              </div>
+              <div style={{padding:"11px 13px",display:"flex",flexDirection:"column",gap:6}}>
+                <div style={{display:"grid",gridTemplateColumns:"34px 1fr 1fr",gap:5}}>
+                  <div/>
+                  <div style={{fontSize:11,color:GRN,fontWeight:700}}>입고</div>
+                  <div style={{fontSize:11,color:RED,fontWeight:700}}>출고</div>
+                </div>
+                {g.data.map(function(d,mi){
+                  const iP=Math.round(d.in/gm*100);
+                  const oP=Math.round(d.out/gm*100);
+                  return(
+                    <div key={mi} style={{display:"grid",gridTemplateColumns:"34px 1fr 1fr",gap:5,alignItems:"center"}}>
+                      <div style={{fontSize:12,fontWeight:700,color:MUT,textAlign:"center"}}>{months[mi]}</div>
+                      <div style={{display:"flex",alignItems:"center",gap:4}}>
+                        <div style={{flex:1,background:BRD2,borderRadius:99,height:16,overflow:"hidden"}}>
+                          <div style={{width:iP+"%",height:"100%",background:GRN+"99",borderRadius:99,minWidth:d.in?2:0}}/>
+                        </div>
+                        <span style={{fontSize:11,fontWeight:700,color:d.in>0?GRN:MUT,minWidth:40,textAlign:"right",flexShrink:0}}>{d.in>0?comma(d.in):"-"}</span>
+                      </div>
+                      <div style={{display:"flex",alignItems:"center",gap:4}}>
+                        <div style={{flex:1,background:BRD2,borderRadius:99,height:16,overflow:"hidden"}}>
+                          <div style={{width:oP+"%",height:"100%",background:RED+"99",borderRadius:99,minWidth:d.out?2:0}}/>
+                        </div>
+                        <span style={{fontSize:11,fontWeight:700,color:d.out>0?RED:MUT,minWidth:40,textAlign:"right",flexShrink:0}}>{d.out>0?comma(d.out):"-"}</span>
+                      </div>
+                    </div>
+                  );
+                })}
+              </div>
+            </Card>
+          );
+        })}
+      </div>
+    </div>
+  );
+}
+
+function Forecast({items,logs}){
+  const [ag,setAg]=useState("전체");
+  const [modal,setModal]=useState(null);
+  const forecasts=useMemo(function(){
+    return items.map(function(item){
+      const iL=logs.filter(function(l){return l.itemId===item.id&&l.type==="출고";});
+      if(!iL.length)return Object.assign({},item,{avgOut:0,forecast:0,daysLeft:999,risk:"안전",riskCol:GRN});
+      const total=iL.reduce(function(s,l){return s+l.qty;},0);
+      const avgOut=Math.round(total/Math.max(1,Math.round(iL.length*2.5))*30);
+      const forecast=Math.round(avgOut*1.1);
+      const daysLeft=avgOut>0?Math.round((item.stock/avgOut)*30):999;
+      var risk="안전",riskCol=GRN;
+      if(daysLeft<7){risk="위험";riskCol=RED;}
+      else if(daysLeft<14){risk="주의";riskCol=YLW;}
+      else if(daysLeft<30){risk="보통";riskCol=SKY;}
+      return Object.assign({},item,{avgOut,forecast,daysLeft,risk,riskCol});
+    }).sort(function(a,b){return a.daysLeft-b.daysLeft;});
+  },[items,logs]);
+  const filtered=ag==="전체"?forecasts:forecasts.filter(function(f){return f.group===ag;});
+  const risky=filtered.filter(function(f){return f.risk==="위험"||f.risk==="주의";});
+  const safe=filtered.filter(function(f){return f.risk==="안전"||f.risk==="보통";});
+  function FBar({f}){
+    return(
+      <Card style={{padding:"14px 15px",marginBottom:8,borderColor:f.risk==="위험"?"rgba(244,63,94,0.3)":f.risk==="주의"?"rgba(245,158,11,0.3)":BRD}}>
+        <div style={{display:"flex",justifyContent:"space-between",alignItems:"flex-start",marginBottom:8}}>
+          <div>
+            <div style={{fontWeight:800,fontSize:14,color:TXTH,marginBottom:3}}>{f.name}</div>
+            <span style={{fontSize:11,color:GCOL[f.group],background:GCOL[f.group]+"15",borderRadius:4,padding:"1px 7px"}}>{GICO[f.group]} {f.group}</span>
+          </div>
+          <div style={{textAlign:"right"}}>
+            <div style={{background:f.riskCol+"18",color:f.riskCol,borderRadius:7,padding:"4px 13px",fontSize:13,fontWeight:800,border:"1px solid "+f.riskCol+"40",marginBottom:3}}>{f.risk}</div>
+            <div style={{fontSize:12,color:MUT}}>잔여 <span style={{color:f.riskCol,fontWeight:700}}>{f.daysLeft>=999?"999+":f.daysLeft+"일"}</span></div>
+          </div>
+        </div>
+        <div style={{display:"flex",gap:12,fontSize:12,color:MUT,marginBottom:8,flexWrap:"wrap"}}>
+          <span>현재고: <span style={{color:TXTH,fontWeight:700}}>{comma(f.stock)}{f.unit}</span></span>
+          <span>월평균: <span style={{color:RED,fontWeight:700}}>{comma(f.avgOut)}{f.unit}</span></span>
+          <span>다음달: <span style={{color:YLW,fontWeight:700}}>{comma(f.forecast)}{f.unit}</span></span>
+        </div>
+        <div style={{background:BRD2,borderRadius:99,height:5}}>
+          <div style={{width:Math.min(100,f.daysLeft>=999?100:f.daysLeft/60*100)+"%",height:"100%",background:f.riskCol,borderRadius:99}}/>
+        </div>
+      </Card>
+    );
+  }
+  const modalList=modal?forecasts.filter(function(f){return f.risk===modal;}):[];
+  return(
+    <div>
+      <SectionTitle icon="[예측]" title="수요예측 대시보드" sub="출고 이력 기반 재고 소진 예측"/>
+      <GroupTabs active={ag} onChange={setAg}/>
+      <div style={{display:"grid",gridTemplateColumns:"1fr 1fr",gap:10,marginBottom:16}}>
+        {[{label:"위험",val:forecasts.filter(function(f){return f.risk==="위험";}).length+"종",color:RED,icon:"[위험]"},
+          {label:"주의",val:forecasts.filter(function(f){return f.risk==="주의";}).length+"종",color:YLW,icon:"[주의]"},
+          {label:"보통",val:forecasts.filter(function(f){return f.risk==="보통";}).length+"종",color:SKY,icon:"[보통]"},
+          {label:"안전",val:forecasts.filter(function(f){return f.risk==="안전";}).length+"종",color:GRN,icon:"[안전]"}
+        ].map(function(k){
+          return(
+            <Card key={k.label}
+              onClick={function(){setModal(k.label);}}
+              style={{padding:"15px 16px",position:"relative",cursor:"pointer",border:"1px solid "+k.color+"35"}}
+              onMouseOver={function(e){e.currentTarget.style.transform="translateY(-2px)";}}
+              onMouseOut={function(e){e.currentTarget.style.transform="translateY(0)";}}
+            >
+              <div style={{position:"absolute",top:10,right:12,fontSize:11,color:k.color,fontWeight:700,opacity:0.7}}>&gt;</div>
+              <div style={{fontSize:13,color:MUT,marginBottom:5,fontWeight:700}}>{k.icon}</div>
+              <div style={{fontSize:22,fontWeight:900,color:k.color}}>{k.val}</div>
+              <div style={{fontSize:13,color:MUT,marginTop:4}}>{k.label}</div>
+            </Card>
+          );
+        })}
+      </div>
+      {risky.length>0&&(
+        <div style={{marginBottom:16}}>
+          <div style={{fontWeight:700,fontSize:14,color:RED,marginBottom:10}}>{"[경고] 즉시 발주 검토 ("+risky.length+"종)"}</div>
+          {risky.map(function(f){return <FBar key={f.id} f={f}/>;}) }
+        </div>
+      )}
+      <div>
+        <div style={{fontWeight:700,fontSize:14,color:MUT,marginBottom:10}}>{"[완료] 안정 품목 ("+safe.length+"종)"}</div>
+        {safe.slice(0,10).map(function(f){return <FBar key={f.id} f={f}/>;}) }
+        {safe.length>10&&<div style={{textAlign:"center",color:MUT,fontSize:13,marginTop:8}}>{"외 "+(safe.length-10)+"종 안전"}</div>}
+      </div>
+
+      {modal&&(
+        <div onClick={function(){setModal(null);}}
+          style={{position:"fixed",inset:0,background:"rgba(0,0,0,0.75)",zIndex:500,
+            display:"flex",alignItems:"flex-end",backdropFilter:"blur(4px)"}}>
+          <div onClick={function(e){e.stopPropagation();}}
+            style={{background:CARD,borderRadius:"22px 22px 0 0",border:"1px solid "+BRD,
+              width:"100%",maxWidth:640,margin:"0 auto",maxHeight:"80vh",overflowY:"auto",paddingBottom:32}}>
+            <div style={{display:"flex",justifyContent:"center",paddingTop:12,marginBottom:4}}>
+              <div style={{width:36,height:4,background:BRD,borderRadius:99}}/>
+            </div>
+            <div style={{position:"sticky",top:0,background:CARD,padding:"12px 20px 14px",
+              borderBottom:"1px solid "+BRD2,display:"flex",alignItems:"center",justifyContent:"space-between",zIndex:1}}>
+              <div style={{fontWeight:800,fontSize:18,color:WHT}}>{"["+modal+"] "+modal+" ("+modalList.length+"종)"}</div>
+              <button onClick={function(){setModal(null);}}
+                style={{background:SURF,border:"1px solid "+BRD,borderRadius:10,color:MUT,
+                  padding:"6px 14px",cursor:"pointer",fontSize:15,fontWeight:700}}>닫기</button>
+            </div>
+            <div style={{padding:"16px"}}>
+              {modalList.length===0?(
+                <div style={{textAlign:"center",padding:"40px",color:MUT,fontSize:15}}>해당 품목이 없습니다</div>
+              ):(
+                modalList.map(function(f){return <FBar key={f.id} f={f}/>;})
+              )}
+            </div>
+          </div>
+        </div>
+      )}
+    </div>
+  );
+}
+
+function ItemManager({items,setItems,showToast}){
+  const empty={name:"",group:"원료",stock:"",unit:"kg",loc:""};
+  const [form,setForm]=useState(empty);
+  const [ag,setAg]=useState("전체");
+  const [search,setSearch]=useState("");
+  const [delId,setDelId]=useState(null);
+  function addItem(){
+    if(!form.name){showToast("품목명을 입력하세요",RED);return;}
+    const stock=form.stock?parseInt(form.stock):0;
+    const pre=form.group==="원료"?"M":form.group==="비에스"?"P":"B";
+    const ex=items.filter(function(i){return i.id.startsWith(pre);});
+    const n=ex.length>0?Math.max.apply(null,ex.map(function(i){return parseInt(i.id.slice(1));}))+1:1;
+    const newItem=Object.assign({},form,{id:pre+String(n).padStart(3,"0"),stock:stock});
+    setItems(function(p){return p.concat([newItem]);});
+    showToast("[완료] 품목 추가 완료 - "+form.name);setForm(empty);
+    apiPost("addItem",{data:itemToRow(newItem)}).catch(function(){showToast("[주의] 서버 저장 실패",YLW);});
+  }
+  function delItem(id){
+    setItems(function(p){return p.filter(function(i){return i.id!==id;});});
+    showToast("[삭제] 품목 삭제 완료",YLW);setDelId(null);
+    apiPost("deleteItem",{id:id}).catch(function(){});
+  }
+  const list=items.filter(function(i){return (ag==="전체"||i.group===ag)&&(!search||i.name.includes(search)||i.id.includes(search));});
+  return(
+    <div>
+      <SectionTitle icon="[설정]" title="품목 관리" sub="관리자 전용"/>
+      <Card style={{padding:18,marginBottom:16}}>
+        <div style={{fontWeight:700,fontSize:15,color:WHT,marginBottom:13}}>[추가] 신규 품목 추가</div>
+        <div style={{display:"flex",gap:8,marginBottom:12}}>
+          {GROUPS.map(function(g){
+            const on=form.group===g;
+            return(
+              <button key={g} onClick={function(){setForm(function(p){return Object.assign({},p,{group:g});});}}
+                style={{flex:1,padding:"10px 4px",borderRadius:9,cursor:"pointer",fontWeight:700,fontSize:12,
+                  border:"2px solid "+(on?GCOL[g]:BRD),background:on?GCOL[g]+"15":"transparent",
+                  color:on?GCOL[g]:MUT,lineHeight:1.4}}>
+                {GICO[g]}<br/>{g}
+              </button>
+            );
+          })}
+        </div>
+        <div style={{marginBottom:11}}>
+          <div style={{fontSize:13,color:MUT,marginBottom:7,fontWeight:700}}>품목명 *</div>
+          <input type="text" placeholder="품목명 입력" value={form.name}
+            onChange={function(e){setForm(function(p){return Object.assign({},p,{name:e.target.value});});}}
+            style={{width:"100%",background:SURF,border:"1px solid "+BRD,borderRadius:8,color:TXTH,padding:"11px 12px",fontSize:14}}/>
+        </div>
+        <div style={{display:"grid",gridTemplateColumns:"2fr 1fr 1fr",gap:10,marginBottom:14}}>
+          <div>
+            <div style={{fontSize:13,color:MUT,marginBottom:7,fontWeight:700}}>초기 재고</div>
+            <input type="number" placeholder="수량" value={form.stock}
+              onChange={function(e){setForm(function(p){return Object.assign({},p,{stock:e.target.value});});}}
+              style={{width:"100%",background:SURF,border:"1px solid "+BRD,borderRadius:8,color:TXTH,padding:"11px 12px",fontSize:14}}/>
+          </div>
+          <div>
+            <div style={{fontSize:13,color:MUT,marginBottom:7,fontWeight:700}}>단위</div>
+            <select value={form.unit} onChange={function(e){setForm(function(p){return Object.assign({},p,{unit:e.target.value});});}}
+              style={{width:"100%",background:SURF,border:"1px solid "+BRD,borderRadius:8,color:TXTH,padding:"11px 8px",fontSize:13}}>
+              <option value="kg">kg</option><option value="개">개</option><option value="L">L</option>
+            </select>
+          </div>
+          <div>
+            <div style={{fontSize:13,color:MUT,marginBottom:7,fontWeight:700}}>위치</div>
+            <input type="text" placeholder="A-01" value={form.loc}
+              onChange={function(e){setForm(function(p){return Object.assign({},p,{loc:e.target.value});});}}
+              style={{width:"100%",background:SURF,border:"1px solid "+BRD,borderRadius:8,color:TXTH,padding:"11px 8px",fontSize:13}}/>
+          </div>
+        </div>
+        <button onClick={addItem} style={{width:"100%",background:"linear-gradient(135deg,#1D6FE8,#38BDF8)",
+          border:"none",borderRadius:10,color:"#fff",padding:"13px",fontWeight:800,fontSize:15,cursor:"pointer"}}>
+          + 품목 추가
+        </button>
+      </Card>
+      <GroupTabs active={ag} onChange={setAg}/>
+      <div style={{display:"flex",justifyContent:"flex-end",marginBottom:12}}>
+        <input value={search} onChange={function(e){setSearch(e.target.value);}} placeholder="품목 검색"
+          style={{background:SURF,border:"1px solid "+BRD,borderRadius:8,color:TXT,padding:"8px 12px",fontSize:14,width:"100%",maxWidth:240}}/>
+      </div>
+      <div style={{display:"grid",gap:8}}>
+        {list.length===0?<Card style={{padding:"28px",textAlign:"center",color:MUT,fontSize:15}}>품목이 없습니다</Card>
+        :list.map(function(item){
+          return(
+            <Card key={item.id} style={{padding:"12px 15px"}}>
+              <div style={{display:"flex",alignItems:"center",gap:10}}>
+                <div style={{flex:1,minWidth:0}}>
+                  <div style={{fontWeight:700,fontSize:14,color:TXTH,marginBottom:3}}>{item.name}</div>
+                  <div style={{display:"flex",gap:8,fontSize:11,color:MUT,flexWrap:"wrap"}}>
+                    <span style={{color:GCOL[item.group],fontWeight:600}}>{GICO[item.group]} {item.group}</span>
+                    <span>{item.id}</span>
+                    <span>{""+item.loc}</span>
+                    <span style={{color:item.stock===0?RED:TXT,fontWeight:item.stock===0?700:400}}>{comma(item.stock)}{item.unit}</span>
+                  </div>
+                </div>
+                {delId===item.id?(
+                  <div style={{display:"flex",gap:6,flexShrink:0}}>
+                    <button onClick={function(){delItem(item.id);}}
+                      style={{background:"rgba(244,63,94,0.15)",border:"1px solid rgba(244,63,94,0.4)",
+                        borderRadius:8,color:RED,padding:"6px 12px",cursor:"pointer",fontSize:13,fontWeight:700}}>확인</button>
+                    <button onClick={function(){setDelId(null);}}
+                      style={{background:"transparent",border:"1px solid "+BRD,borderRadius:8,color:MUT,padding:"6px 10px",cursor:"pointer",fontSize:13}}>취소</button>
+                  </div>
+                ):(
+                  <button onClick={function(){setDelId(item.id);}}
+                    style={{background:"transparent",border:"1px solid rgba(244,63,94,0.3)",borderRadius:8,
+                      color:RED,padding:"6px 12px",cursor:"pointer",fontSize:12,fontWeight:600,flexShrink:0}}>삭제</button>
+                )}
+              </div>
+            </Card>
+          );
+        })}
+      </div>
+    </div>
+  );
+}
+
+function AIChat({items,logs}){
+  const [msgs,setMsgs]=useState([{role:"ai",text:"안녕하세요! 세인비에스 AI 어시스턴트입니다\n\n실시간 재고 데이터로 분석해 드립니다.\n궁금한 것을 질문해 주세요!"}]);
+  const [input,setInput]=useState("");
+  const [loading,setLoading]=useState(false);
+  const ref=useRef(null);
+  useEffect(function(){if(ref.current)ref.current.scrollIntoView({behavior:"smooth"});},[msgs]);
+  const QUICK=["재고없는 품목 알려줘","바이오보관품 현황","비에스 제품 요약","원료 재고 분석","발주 필요 품목","출고 많은 품목은?"];
+  function send(q){
+    const question=q||input.trim();
+    if(!question||loading)return;
+    setInput("");
+    setMsgs(function(p){return p.concat([{role:"user",text:question}]);});
+    setLoading(true);
+    callAI(question,items,logs).then(function(ans){
+      setMsgs(function(p){return p.concat([{role:"ai",text:ans}]);});
+      setLoading(false);
+    }).catch(function(){
+      setMsgs(function(p){return p.concat([{role:"ai",text:"[오류] 오류가 발생했습니다."}]);});
+      setLoading(false);
+    });
+  }
+  return(
+    <div>
+      <SectionTitle icon="[AI]" title="AI 재고 상담" sub="실시간 데이터 기반 분석"/>
+      <div style={{display:"flex",gap:8,flexWrap:"wrap",marginBottom:14}}>
+        {QUICK.map(function(q){
+          return(
+            <button key={q} onClick={function(){send(q);}} disabled={loading}
+              style={{background:CARD,border:"1px solid "+BRD,borderRadius:8,color:MUT,
+                padding:"7px 13px",cursor:"pointer",fontSize:13,opacity:loading?0.5:1}}>
+              {q}
+            </button>
+          );
+        })}
+      </div>
+      <Card style={{height:380,overflowY:"auto",padding:15,marginBottom:12,display:"flex",flexDirection:"column",gap:11}}>
+        {msgs.map(function(m,i){
+          return(
+            <div key={i} style={{display:"flex",justifyContent:m.role==="user"?"flex-end":"flex-start",gap:9}}>
+              {m.role==="ai"&&(
+                <div style={{minWidth:32,height:32,padding:"0 6px",borderRadius:9,
+                  background:"linear-gradient(135deg,#1D6FE8,#38BDF8)",
+                  display:"flex",alignItems:"center",justifyContent:"center",
+                  fontSize:10,fontWeight:800,whiteSpace:"nowrap",flexShrink:0,alignSelf:"flex-start",marginTop:2}}>[AI]</div>
+              )}
+              <div style={{maxWidth:"80%",
+                background:m.role==="user"?"linear-gradient(135deg,#1D6FE8,#38BDF8)":SURF,
+                border:m.role==="ai"?"1px solid "+BRD:"none",
+                borderRadius:m.role==="user"?"14px 14px 3px 14px":"14px 14px 14px 3px",
+                padding:"12px 14px",fontSize:14,lineHeight:1.7,whiteSpace:"pre-wrap",color:TXTH}}>
+                {m.text}
+              </div>
+            </div>
+          );
+        })}
+        {loading&&(
+          <div style={{display:"flex",gap:9}}>
+            <div style={{minWidth:32,height:32,padding:"0 6px",borderRadius:9,background:"linear-gradient(135deg,#1D6FE8,#38BDF8)",
+              display:"flex",alignItems:"center",justifyContent:"center",fontSize:10,fontWeight:800,whiteSpace:"nowrap"}}>[AI]</div>
+            <div style={{background:SURF,border:"1px solid "+BRD,borderRadius:"14px 14px 14px 3px",
+              padding:"12px 14px",fontSize:14,color:MUT}}>분석 중...</div>
+          </div>
+        )}
+        <div ref={ref}/>
+      </Card>
+      <div style={{display:"flex",gap:10}}>
+        <input value={input} onChange={function(e){setInput(e.target.value);}}
+          onKeyDown={function(e){if(e.key==="Enter"&&!loading)send();}}
+          placeholder="질문 입력..." disabled={loading}
+          style={{flex:1,background:SURF,border:"1px solid "+BRD,borderRadius:10,
+            color:TXTH,padding:"13px 15px",fontSize:14}}/>
+        <button onClick={function(){send();}} disabled={loading}
+          style={{background:"linear-gradient(135deg,#1D6FE8,#38BDF8)",border:"none",
+            borderRadius:10,color:"#fff",padding:"13px 20px",fontWeight:800,cursor:"pointer",
+            fontSize:14,opacity:loading?0.6:1}}>전송</button>
+      </div>
+    </div>
+  );
+}
+
+
+const root = ReactDOM.createRoot(document.getElementById("root"));
+root.render(<App/>);
+</script>
+</body>
+</html>
