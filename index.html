@@ -12,6 +12,16 @@
     font-family:'Nanum Gothic',-apple-system,system-ui,sans-serif;
     color-scheme:dark;}
   *{box-sizing:border-box;}
+  input[type='date']{color:#F1F3F6 !important;-webkit-text-fill-color:#F1F3F6 !important;background-color:transparent !important;}
+  input[type='date']::-webkit-datetime-edit{color:#F1F3F6 !important;-webkit-text-fill-color:#F1F3F6 !important;}
+  input[type='date']::-webkit-datetime-edit-fields-wrapper{color:#F1F3F6 !important;-webkit-text-fill-color:#F1F3F6 !important;}
+  input[type='date']::-webkit-datetime-edit-text{color:#F1F3F6 !important;-webkit-text-fill-color:#F1F3F6 !important;}
+  input[type='date']::-webkit-datetime-edit-month-field{color:#F1F3F6 !important;-webkit-text-fill-color:#F1F3F6 !important;}
+  input[type='date']::-webkit-datetime-edit-day-field{color:#F1F3F6 !important;-webkit-text-fill-color:#F1F3F6 !important;}
+  input[type='date']::-webkit-datetime-edit-year-field{color:#F1F3F6 !important;-webkit-text-fill-color:#F1F3F6 !important;}
+  input[type='date']::-webkit-calendar-picker-indicator{filter:invert(1) brightness(1.8);cursor:pointer;opacity:1 !important;}
+  select{color:#F1F3F6 !important;-webkit-text-fill-color:#F1F3F6 !important;}
+  select option{background:#1D2330;color:#F1F3F6;}
 </style>
 <script src="https://unpkg.com/react@18/umd/react.production.min.js" crossorigin></script>
 <script src="https://unpkg.com/react-dom@18/umd/react-dom.production.min.js" crossorigin></script>
@@ -334,6 +344,23 @@ function App(){
   const [loadErr,setLoadErr]=useState(null);
   const [showVisits,setShowVisits]=useState(false);
   const [lastSync,setLastSync]=useState(null);
+
+  useEffect(function(){
+    var styleEl=document.createElement("style");
+    styleEl.innerHTML=
+      "input[type='date']{color:#F1F3F6 !important;-webkit-text-fill-color:#F1F3F6 !important;background-color:transparent !important;}"+
+      "input[type='date']::-webkit-datetime-edit{color:#F1F3F6 !important;-webkit-text-fill-color:#F1F3F6 !important;}"+
+      "input[type='date']::-webkit-datetime-edit-fields-wrapper{color:#F1F3F6 !important;-webkit-text-fill-color:#F1F3F6 !important;}"+
+      "input[type='date']::-webkit-datetime-edit-text{color:#F1F3F6 !important;-webkit-text-fill-color:#F1F3F6 !important;}"+
+      "input[type='date']::-webkit-datetime-edit-month-field{color:#F1F3F6 !important;-webkit-text-fill-color:#F1F3F6 !important;}"+
+      "input[type='date']::-webkit-datetime-edit-day-field{color:#F1F3F6 !important;-webkit-text-fill-color:#F1F3F6 !important;}"+
+      "input[type='date']::-webkit-datetime-edit-year-field{color:#F1F3F6 !important;-webkit-text-fill-color:#F1F3F6 !important;}"+
+      "input[type='date']::-webkit-calendar-picker-indicator{filter:invert(1) brightness(1.8);cursor:pointer;opacity:1 !important;}"+
+      "select{color:#F1F3F6 !important;-webkit-text-fill-color:#F1F3F6 !important;background-color:#1D2330 !important;}"+
+      "select option{background:#1D2330;color:#F1F3F6;}";
+    document.head.appendChild(styleEl);
+    return function(){document.head.removeChild(styleEl);};
+  },[]);
 
   useEffect(function(){
     var t=setInterval(function(){setClock(new Date());},1000);
