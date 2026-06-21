@@ -1749,9 +1749,11 @@ function InOut({items,setItems,logs,setLogs,showToast,user,isAdmin,onSaved}){
           <input type="date" value={fDate} onChange={function(e){setFDate(e.target.value);}}
             style={{background:SURF,border:"1px solid "+(fDate?ACC:BRD),borderRadius:8,
               color:"transparent",padding:"6px 12px",fontSize:14,width:130,
-              colorScheme:"dark"}}/>
-          <div style={{position:"absolute",left:12,top:"50%",transform:"translateY(-50%)",
-            pointerEvents:"none",fontSize:14,color:fDate?ACCL:TXT,whiteSpace:"nowrap"}}>
+              colorScheme:"dark",position:"relative",zIndex:1}}/>
+          <div style={{position:"absolute",left:1,top:1,bottom:1,right:28,
+            background:SURF,borderRadius:"7px 0 0 7px",zIndex:2,
+            display:"flex",alignItems:"center",paddingLeft:11,
+            pointerEvents:"none",fontSize:14,color:fDate?ACCL:TXT,whiteSpace:"nowrap",overflow:"hidden"}}>
             {fDate?(function(){var d=new Date(fDate);return (d.getMonth()+1)+"월 "+d.getDate()+"일";})():"날짜 선택"}
           </div>
         </div>
@@ -1914,9 +1916,11 @@ function Inventory({items,setItems,showToast,isAdmin,logs,initialGroup}){
           <input type="date" value={fDate} onChange={function(e){setFDate(e.target.value);}}
             style={{background:SURF,border:"1px solid "+(fDate?ACC:BRD),borderRadius:8,
               color:"transparent",padding:"8px 14px",fontSize:14,width:140,
-              colorScheme:"dark"}}/>
-          <div style={{position:"absolute",left:14,top:"50%",transform:"translateY(-50%)",
-            pointerEvents:"none",fontSize:14,color:fDate?ACCL:TXT,whiteSpace:"nowrap"}}>
+              colorScheme:"dark",position:"relative",zIndex:1}}/>
+          <div style={{position:"absolute",left:1,top:1,bottom:1,right:30,
+            background:SURF,borderRadius:"7px 0 0 7px",zIndex:2,
+            display:"flex",alignItems:"center",paddingLeft:13,
+            pointerEvents:"none",fontSize:14,color:fDate?ACCL:TXT,whiteSpace:"nowrap",overflow:"hidden"}}>
             {fDate?(function(){var d=new Date(fDate);return (d.getMonth()+1)+"월 "+d.getDate()+"일";})():"날짜 검색"}
           </div>
         </div>
