@@ -12,13 +12,7 @@
     font-family:'Nanum Gothic',-apple-system,system-ui,sans-serif;
     color-scheme:dark;}
   *{box-sizing:border-box;}
-  input[type='date']{color:#F1F3F6 !important;-webkit-text-fill-color:#F1F3F6 !important;background-color:transparent !important;}
-  input[type='date']::-webkit-datetime-edit{color:#F1F3F6 !important;-webkit-text-fill-color:#F1F3F6 !important;}
-  input[type='date']::-webkit-datetime-edit-fields-wrapper{color:#F1F3F6 !important;-webkit-text-fill-color:#F1F3F6 !important;}
-  input[type='date']::-webkit-datetime-edit-text{color:#F1F3F6 !important;-webkit-text-fill-color:#F1F3F6 !important;}
-  input[type='date']::-webkit-datetime-edit-month-field{color:#F1F3F6 !important;-webkit-text-fill-color:#F1F3F6 !important;}
-  input[type='date']::-webkit-datetime-edit-day-field{color:#F1F3F6 !important;-webkit-text-fill-color:#F1F3F6 !important;}
-  input[type='date']::-webkit-datetime-edit-year-field{color:#F1F3F6 !important;-webkit-text-fill-color:#F1F3F6 !important;}
+  input[type='date']{color:transparent;-webkit-text-fill-color:transparent;background-color:transparent !important;}
   input[type='date']::-webkit-calendar-picker-indicator{filter:invert(1) brightness(1.8);cursor:pointer;opacity:1 !important;}
   select{color:#F1F3F6 !important;-webkit-text-fill-color:#F1F3F6 !important;}
   select option{background:#1D2330;color:#F1F3F6;}
@@ -1755,9 +1749,16 @@ function InOut({items,setItems,logs,setLogs,showToast,user,isAdmin,onSaved}){
 
       {/* 날짜 검색 */}
       <div style={{display:"flex",gap:8,marginBottom:14,alignItems:"center",flexWrap:"wrap"}}>
-        <input type="date" value={fDate} onChange={function(e){setFDate(e.target.value);}}
-          style={{background:SURF,border:"1px solid "+(fDate?ACC:BRD),borderRadius:8,
-            color:fDate?ACCL:TXT,padding:"6px 12px",fontSize:14,colorScheme:"dark"}}/>
+        <div style={{position:"relative",display:"inline-flex"}}>
+          <input type="date" value={fDate} onChange={function(e){setFDate(e.target.value);}}
+            style={{background:SURF,border:"1px solid "+(fDate?ACC:BRD),borderRadius:8,
+              color:"transparent",padding:"6px 12px",fontSize:14,width:130,
+              colorScheme:"dark"}}/>
+          <div style={{position:"absolute",left:12,top:"50%",transform:"translateY(-50%)",
+            pointerEvents:"none",fontSize:14,color:fDate?ACCL:TXT,whiteSpace:"nowrap"}}>
+            {fDate?(function(){var d=new Date(fDate);return (d.getMonth()+1)+"월 "+d.getDate()+"일";})():"날짜 선택"}
+          </div>
+        </div>
         {fDate&&<button onClick={function(){setFDate("");}}
           style={{background:"transparent",border:"1px solid "+BRD,borderRadius:8,color:MUT,
             padding:"6px 12px",cursor:"pointer",fontSize:12}}>날짜 초기화</button>}
@@ -1913,9 +1914,16 @@ function Inventory({items,setItems,showToast,isAdmin,logs,initialGroup}){
         right={!isAdmin?<span style={{fontSize:12,color:YLW,background:"rgba(245,158,11,0.1)",border:"1px solid rgba(245,158,11,0.3)",borderRadius:8,padding:"6px 12px",fontWeight:600}}> 조회전용</span>:null}/>
       <GroupTabs active={ag} onChange={setAg}/>
       <div style={{display:"flex",gap:8,flexWrap:"wrap",marginBottom:13,alignItems:"center"}}>
-        <input type="date" value={fDate} onChange={function(e){setFDate(e.target.value);}}
-          style={{background:SURF,border:"1px solid "+(fDate?ACC:BRD),borderRadius:8,
-            color:fDate?ACCL:TXT,padding:"8px 14px",fontSize:14,colorScheme:"dark"}}/>
+        <div style={{position:"relative",display:"inline-flex"}}>
+          <input type="date" value={fDate} onChange={function(e){setFDate(e.target.value);}}
+            style={{background:SURF,border:"1px solid "+(fDate?ACC:BRD),borderRadius:8,
+              color:"transparent",padding:"8px 14px",fontSize:14,width:140,
+              colorScheme:"dark"}}/>
+          <div style={{position:"absolute",left:14,top:"50%",transform:"translateY(-50%)",
+            pointerEvents:"none",fontSize:14,color:fDate?ACCL:TXT,whiteSpace:"nowrap"}}>
+            {fDate?(function(){var d=new Date(fDate);return (d.getMonth()+1)+"월 "+d.getDate()+"일";})():"날짜 검색"}
+          </div>
+        </div>
         {fDate&&<button onClick={function(){setFDate("");}}
           style={{background:"transparent",border:"1px solid "+BRD,borderRadius:8,color:MUT,
             padding:"8px 14px",cursor:"pointer",fontSize:12}}>날짜 초기화</button>}
