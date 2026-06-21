@@ -9,7 +9,8 @@
 <link href="https://fonts.googleapis.com/css2?family=Nanum+Gothic:wght@400;700;800&display=swap" rel="stylesheet"/>
 <style>
   html,body{margin:0;padding:0;background:#0F1115;overflow-x:hidden;
-    font-family:'Nanum Gothic',-apple-system,system-ui,sans-serif;}
+    font-family:'Nanum Gothic',-apple-system,system-ui,sans-serif;
+    color-scheme:dark;}
   *{box-sizing:border-box;}
 </style>
 <script src="https://unpkg.com/react@18/umd/react.production.min.js" crossorigin></script>
@@ -1249,7 +1250,7 @@ function Produce({items,setItems,logs,setLogs,fmls,setFmls,pLogs,setPLogs,showTo
                   setNf(function(p){return Object.assign({},p,{productId:e.target.value,productName:prod?prod.name:""});});
                 }}
                 style={{width:"100%",background:SURF,border:"1px solid "+BRD,borderRadius:8,
-                  color:nf.productId?TXTH:MUT,padding:"10px 14px",fontSize:14}}>
+                  color:nf.productId?TXTH:MUT,padding:"10px 14px",fontSize:14,colorScheme:"dark"}}>
                 <option value="">-- 생산할 완제품 선택 --</option>
                 {items.filter(function(i){return i.group==="비에스";}).map(function(i){
                   return <option key={i.id} value={i.id}>{i.name} (재고: {comma(i.stock)}{i.unit})</option>;
@@ -1268,7 +1269,7 @@ function Produce({items,setItems,logs,setLogs,fmls,setFmls,pLogs,setPLogs,showTo
               <div style={{display:"flex",flexDirection:"column",gap:8,marginBottom:10}}>
                 <select value={nIng.itemId} onChange={function(e){setNIng(function(p){return Object.assign({},p,{itemId:e.target.value});});}}
                   style={{width:"100%",background:CARD,border:"1px solid "+BRD,borderRadius:8,
-                    color:nIng.itemId?TXTH:MUT,padding:"10px 14px",fontSize:14}}>
+                    color:nIng.itemId?TXTH:MUT,padding:"10px 14px",fontSize:14,colorScheme:"dark"}}>
                   <option value="">-- 원료 선택 --</option>
                   {rawItems.map(function(i){return <option key={i.id} value={i.id}>{i.name} (재고: {comma(i.stock)}kg)</option>;})}
                 </select>
@@ -1518,7 +1519,7 @@ function InOut({items,setItems,logs,setLogs,showToast,user,isAdmin,onSaved}){
             <div style={{fontSize:12,color:MUT,marginBottom:7,fontWeight:700}}>품목 선택 *</div>
             <select value={form.itemId} onChange={function(e){setForm(function(p){return Object.assign({},p,{itemId:e.target.value});});}}
               style={{width:"100%",background:SURF,border:"1px solid "+BRD,borderRadius:8,
-                color:form.itemId?TXTH:MUT,padding:"10px 14px",fontSize:14}}>
+                color:form.itemId?TXTH:MUT,padding:"10px 14px",fontSize:14,colorScheme:"dark"}}>
               <option value="">-- 품목 선택 --</option>
               {GROUPS.map(function(g){
                 return(
@@ -1688,7 +1689,7 @@ function InOut({items,setItems,logs,setLogs,showToast,user,isAdmin,onSaved}){
             <div>
               <div style={{fontSize:12,color:MUT,marginBottom:7,fontWeight:700}}>단위</div>
               <select value={nItem.unit} onChange={function(e){setNItem(function(p){return Object.assign({},p,{unit:e.target.value});});}}
-                style={{width:"100%",background:SURF,border:"1px solid "+BRD,borderRadius:8,color:TXTH,padding:"10px 12px",fontSize:14}}>
+                style={{width:"100%",background:SURF,border:"1px solid "+BRD,borderRadius:8,color:TXTH,padding:"10px 12px",fontSize:14,colorScheme:"dark"}}>
                 <option value="kg">kg</option>
                 <option value="개">개</option>
                 <option value="L">L</option>
@@ -1727,9 +1728,9 @@ function InOut({items,setItems,logs,setLogs,showToast,user,isAdmin,onSaved}){
 
       {/* 날짜 검색 */}
       <div style={{display:"flex",gap:8,marginBottom:14,alignItems:"center",flexWrap:"wrap"}}>
-        <input type="date"value={fDate} onChange={function(e){setFDate(e.target.value);}}
+        <input type="date" value={fDate} onChange={function(e){setFDate(e.target.value);}}
           style={{background:SURF,border:"1px solid "+(fDate?ACC:BRD),borderRadius:8,
-            color:fDate?ACCL:TXT,padding:"6px 12px",fontSize:14}}/>
+            color:fDate?ACCL:TXT,padding:"6px 12px",fontSize:14,colorScheme:"dark"}}/>
         {fDate&&<button onClick={function(){setFDate("");}}
           style={{background:"transparent",border:"1px solid "+BRD,borderRadius:8,color:MUT,
             padding:"6px 12px",cursor:"pointer",fontSize:12}}>날짜 초기화</button>}
@@ -1887,7 +1888,7 @@ function Inventory({items,setItems,showToast,isAdmin,logs,initialGroup}){
       <div style={{display:"flex",gap:8,flexWrap:"wrap",marginBottom:13,alignItems:"center"}}>
         <input type="date" value={fDate} onChange={function(e){setFDate(e.target.value);}}
           style={{background:SURF,border:"1px solid "+(fDate?ACC:BRD),borderRadius:8,
-            color:fDate?ACCL:TXT,padding:"8px 14px",fontSize:14}}/>
+            color:fDate?ACCL:TXT,padding:"8px 14px",fontSize:14,colorScheme:"dark"}}/>
         {fDate&&<button onClick={function(){setFDate("");}}
           style={{background:"transparent",border:"1px solid "+BRD,borderRadius:8,color:MUT,
             padding:"8px 14px",cursor:"pointer",fontSize:12}}>날짜 초기화</button>}
@@ -2345,7 +2346,7 @@ function ItemManager({items,setItems,showToast}){
           <div>
             <div style={{fontSize:12,color:MUT,marginBottom:7,fontWeight:700}}>단위</div>
             <select value={form.unit} onChange={function(e){setForm(function(p){return Object.assign({},p,{unit:e.target.value});});}}
-              style={{width:"100%",background:SURF,border:"1px solid "+BRD,borderRadius:8,color:TXTH,padding:"10px 10px",fontSize:12}}>
+              style={{width:"100%",background:SURF,border:"1px solid "+BRD,borderRadius:8,color:TXTH,padding:"10px 10px",fontSize:12,colorScheme:"dark"}}>
               <option value="kg">kg</option><option value="개">개</option><option value="L">L</option>
             </select>
           </div>
